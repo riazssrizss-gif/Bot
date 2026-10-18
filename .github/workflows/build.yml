@@ -54,6 +54,27 @@ jobs:
           fi
           test -f project/pubspec.yaml || { echo "pubspec.yaml tidak ditemukan"; exit 1; }
 
+      - name: Fix Gradle version
+        working-directory: project
+        run: |
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            CURRENT=$(grep distributionUrl android/gradle/wrapper/gradle-wrapper.properties | grep -o 'gradle-[0-9.]*' | grep -o '[0-9.]*')
+            echo "Gradle saat ini: $CURRENT"
+            sed -i 's|gradle-[0-9.]*-bin|gradle-8.14-bin|g' android/gradle/wrapper/gradle-wrapper.properties
+            echo "Gradle diupdate ke 8.14"
+            cat android/gradle/wrapper/gradle-wrapper.properties
+          fi
+
+      - name: Fix AGP version
+        working-directory: project
+        run: |
+          if [ -f android/settings.gradle ]; then
+            sed -i 's|com.android.tools.build:gradle:[0-9.]*|com.android.tools.build:gradle:8.7.0|g' android/settings.gradle
+          fi
+          if [ -f android/build.gradle ]; then
+            sed -i 's|com.android.tools.build:gradle:[0-9.]*|com.android.tools.build:gradle:8.7.0|g' android/build.gradle
+          fi
+
       - name: Get dependencies
         working-directory: project
         run: flutter pub get
