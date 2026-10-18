@@ -58,8 +58,10 @@ jobs:
         run: |
           FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
           if [ -n "$FILE" ]; then
-            echo "Found: $FILE"
-            sed -i 's|gradle-[0-9.]*-bin|gradle-8.14-bin|g' "$FILE"
+            echo "Sebelum:"
+            cat "$FILE"
+            sed -i 's|distributions/gradle-[^/]*|distributions/gradle-8.14-bin|g' "$FILE"
+            echo "Sesudah:"
             cat "$FILE"
           else
             echo "gradle-wrapper.properties tidak ditemukan"
