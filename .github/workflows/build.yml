@@ -1,0 +1,77 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "URL download ZIP project Flutter"
+        required: true
+        default: ""
+      tag:
+        description: "Tag release"
+        required: false
+        default: ""
+      build_type:
+        description: "debug atau release"
+        required: false
+        default: "release"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Download source ZIP
+        run: |
+          set -e
+          URL="${{ github.event.inputs.zip_url }}"
+          echo "Downloading: $URL"
+          curl -L -o project.zip "$URL"
+          if [ ! -s project.zip ]; then
+            echo "File ZIP kosong atau download gagal"
+            exit 1
+          fi
+          mkdir -p project
+          unzip -q project.zip -d project
+          if [ ! -f project/pubspec.yaml ]; then
+            DIR=$(find project -name pubspec.yaml 2>/dev/null | head -1 | xargs dirname)
+            if [ -n "$DIR" ]; then cp -a "$DIR"/. project/; fi
+          fi
+          test -f project/pubspec.yaml || { echo "pubspec.yaml tidak ditemukan"; exit 1; }
+
+      - name: Get dependencies
+        working-directory: project
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: project
+        run: |
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
+            flutter build apk --debug
+          else
+            flutter build apk --release
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-build
+          path: |
+            project/build/app/outputs/flutter-apk/*.apk
+            project/build/app/outputs/apk/**/*.apk
+          if-no-files-found: error
