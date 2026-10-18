@@ -33,6 +33,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.27.4'
           channel: stable
           cache: true
 
@@ -53,25 +54,6 @@ jobs:
             if [ -n "$DIR" ]; then cp -a "$DIR"/. project/; fi
           fi
           test -f project/pubspec.yaml || { echo "pubspec.yaml tidak ditemukan"; exit 1; }
-
-      - name: Fix Gradle version
-        run: |
-          FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
-          if [ -n "$FILE" ]; then
-            echo "Sebelum:"
-            cat "$FILE"
-            sed -i 's|distributions/gradle-[^/]*|distributions/gradle-8.14-bin|g' "$FILE"
-            echo "Sesudah:"
-            cat "$FILE"
-          else
-            echo "gradle-wrapper.properties tidak ditemukan"
-          fi
-
-      - name: Fix AGP version
-        run: |
-          for F in $(find project -name "settings.gradle" -o -name "build.gradle" 2>/dev/null); do
-            sed -i 's|com.android.tools.build:gradle:[0-9.]*|com.android.tools.build:gradle:8.7.0|g' "$F"
-          done
 
       - name: Get dependencies
         working-directory: project
