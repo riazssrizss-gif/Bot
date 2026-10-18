@@ -30,54 +30,34 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
       - name: Download source ZIP
         run: |
           set -e
           URL="${{ github.event.inputs.zip_url }}"
-          echo "Downloading: $URL"
           curl -L -o project.zip "$URL"
-          if [ ! -s project.zip ]; then
-            echo "File ZIP kosong atau download gagal"
-            exit 1
-          fi
+          if [ ! -s project.zip ]; then exit 1; fi
           mkdir -p project
           unzip -q project.zip -d project
           if [ ! -f project/pubspec.yaml ]; then
             DIR=$(find project -name pubspec.yaml 2>/dev/null | head -1 | xargs dirname)
             if [ -n "$DIR" ]; then cp -a "$DIR"/. project/; fi
           fi
-          test -f project/pubspec.yaml || { echo "pubspec.yaml tidak ditemukan"; exit 1; }
+          test -f project/pubspec.yaml
 
-      - name: Detect Flutter version from pubspec
-        id: detect_flutter
+      - name: Relax SDK constraint
         working-directory: project
         run: |
-          SDK=$(grep -E '^\s*sdk:' pubspec.yaml | grep -o '[0-9]\+\.[0-9]\+\.[0-9]*' | head -1)
-          if [ -z "$SDK" ]; then
-            SDK="3.24.5"
-          fi
-          echo "Detected SDK constraint: $SDK"
-          # Map sdk dart version ke flutter version
-          MAJOR=$(echo $SDK | cut -d. -f1)
-          MINOR=$(echo $SDK | cut -d. -f2)
-          if [ "$MINOR" -ge "8" ]; then
-            FLUTTER_VER="3.32.0"
-          elif [ "$MINOR" -ge "6" ]; then
-            FLUTTER_VER="3.27.1"
-          elif [ "$MINOR" -ge "5" ]; then
-            FLUTTER_VER="3.24.5"
-          else
-            FLUTTER_VER="3.24.5"
-          fi
-          echo "flutter_version=$FLUTTER_VER" >> $GITHUB_OUTPUT
-          echo "Using Flutter: $FLUTTER_VER"
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ steps.detect_flutter.outputs.flutter_version }}
-          channel: stable
-          cache: true
+          sed -i 's/sdk: "\^[0-9.]*"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+          sed -i "s/sdk: '\^[0-9.]*'/sdk: '>=3.0.0 <4.0.0'/g" pubspec.yaml
+          sed -i 's/sdk: \^[0-9.]*/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
+          grep sdk pubspec.yaml
 
       - name: Get dependencies
         working-directory: project
