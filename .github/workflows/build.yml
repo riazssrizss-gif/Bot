@@ -55,25 +55,21 @@ jobs:
           test -f project/pubspec.yaml || { echo "pubspec.yaml tidak ditemukan"; exit 1; }
 
       - name: Fix Gradle version
-        working-directory: project
         run: |
-          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-            CURRENT=$(grep distributionUrl android/gradle/wrapper/gradle-wrapper.properties | grep -o 'gradle-[0-9.]*' | grep -o '[0-9.]*')
-            echo "Gradle saat ini: $CURRENT"
-            sed -i 's|gradle-[0-9.]*-bin|gradle-8.14-bin|g' android/gradle/wrapper/gradle-wrapper.properties
-            echo "Gradle diupdate ke 8.14"
-            cat android/gradle/wrapper/gradle-wrapper.properties
+          FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
+          if [ -n "$FILE" ]; then
+            echo "Found: $FILE"
+            sed -i 's|gradle-[0-9.]*-bin|gradle-8.14-bin|g' "$FILE"
+            cat "$FILE"
+          else
+            echo "gradle-wrapper.properties tidak ditemukan"
           fi
 
       - name: Fix AGP version
-        working-directory: project
         run: |
-          if [ -f android/settings.gradle ]; then
-            sed -i 's|com.android.tools.build:gradle:[0-9.]*|com.android.tools.build:gradle:8.7.0|g' android/settings.gradle
-          fi
-          if [ -f android/build.gradle ]; then
-            sed -i 's|com.android.tools.build:gradle:[0-9.]*|com.android.tools.build:gradle:8.7.0|g' android/build.gradle
-          fi
+          for F in $(find project -name "settings.gradle" -o -name "build.gradle" 2>/dev/null); do
+            sed -i 's|com.android.tools.build:gradle:[0-9.]*|com.android.tools.build:gradle:8.7.0|g' "$F"
+          done
 
       - name: Get dependencies
         working-directory: project
