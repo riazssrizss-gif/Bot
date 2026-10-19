@@ -63,21 +63,41 @@ jobs:
           FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
           if [ -n "$FILE" ]; then
             sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.12-all.zip|g' "$FILE"
-            echo "gradle-wrapper.properties:"
             cat "$FILE"
           fi
-
-      - name: Fix AGP in settings.gradle.kts
-        run: |
-          for F in $(find project -name "settings.gradle.kts" 2>/dev/null); do
-            sed -i 's|com.android.application.*version "[0-9.]*"|com.android.application") version "8.9.1"|g' "$F"
-            echo "Fixed: $F"
-            cat "$F"
-          done
 
       - name: Setup NDK
         run: |
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" || true
+
+      - name: Create dummy google-services.json
+        run: |
+          APP_DIR=$(find project -name "google-services.json" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+          if [ -z "$APP_DIR" ]; then
+            APP_DIR=$(find project -path "*/android/app" -type d 2>/dev/null | head -1)
+            if [ -n "$APP_DIR" ]; then
+              cat > "$APP_DIR/google-services.json" << 'EOF'
+{
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "dummy-project",
+    "storage_bucket": "dummy-project.appspot.com"
+  },
+  "client": [{
+    "client_info": {
+      "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+      "android_client_info": { "package_name": "com.example.app" }
+    },
+    "oauth_client": [],
+    "api_key": [{ "current_key": "dummy" }],
+    "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+  }],
+  "configuration_version": "1"
+}
+EOF
+              echo "Created dummy google-services.json at $APP_DIR"
+            fi
+          fi
 
       - name: Get dependencies
         working-directory: project
