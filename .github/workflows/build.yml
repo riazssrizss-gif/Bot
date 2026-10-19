@@ -57,13 +57,12 @@ jobs:
           sed -i 's/sdk: "\^[0-9.]*"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
           sed -i "s/sdk: '\^[0-9.]*'/sdk: '>=3.0.0 <4.0.0'/g" pubspec.yaml
           sed -i 's/sdk: \^[0-9.]*/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
-          grep sdk pubspec.yaml
 
       - name: Fix Gradle and AGP
         run: |
           FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
           if [ -n "$FILE" ]; then
-            sed -i 's|distributions/gradle-[^/]*|distributions/gradle-8.9-bin|g' "$FILE"
+            sed -i 's|distributions/gradle-[^/]*|distributions/gradle-8.14.5-bin|g' "$FILE"
             echo "gradle-wrapper.properties:"
             cat "$FILE"
           fi
