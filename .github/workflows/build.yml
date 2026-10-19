@@ -62,7 +62,7 @@ jobs:
         run: |
           FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
           if [ -n "$FILE" ]; then
-            sed -i 's|distributions/gradle-[^/]*|distributions/gradle-8.14.5-bin|g' "$FILE"
+            sed -i 's|distributionUrl=.*|distributionUrl=https\\://downloads.gradle.org/distributions/gradle-8.14.5-bin.zip|g' "$FILE"
             echo "gradle-wrapper.properties:"
             cat "$FILE"
           fi
