@@ -58,17 +58,26 @@ jobs:
           sed -i "s/sdk: '\^[0-9.]*'/sdk: '>=3.0.0 <4.0.0'/g" pubspec.yaml
           sed -i 's/sdk: \^[0-9.]*/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
 
-      - name: Fix Gradle and AGP
+      - name: Fix Gradle wrapper
         run: |
           FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
           if [ -n "$FILE" ]; then
-            sed -i 's|distributionUrl=.*|distributionUrl=https\\://downloads.gradle.org/distributions/gradle-8.14.5-bin.zip|g' "$FILE"
+            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.12-all.zip|g' "$FILE"
             echo "gradle-wrapper.properties:"
             cat "$FILE"
           fi
-          for F in $(find project -name "settings.gradle" -o -name "build.gradle" 2>/dev/null); do
-            sed -i 's|com.android.tools.build:gradle:[0-9.]*|com.android.tools.build:gradle:8.3.0|g' "$F"
+
+      - name: Fix AGP in settings.gradle.kts
+        run: |
+          for F in $(find project -name "settings.gradle.kts" 2>/dev/null); do
+            sed -i 's|com.android.application.*version "[0-9.]*"|com.android.application") version "8.9.1"|g' "$F"
+            echo "Fixed: $F"
+            cat "$F"
           done
+
+      - name: Setup NDK
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" || true
 
       - name: Get dependencies
         working-directory: project
