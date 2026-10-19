@@ -61,9 +61,14 @@ jobs:
       - name: Fix incompatible packages
         working-directory: project
         run: |
-          if grep -q "package_info_plus" pubspec.yaml; then
-            sed -i 's/package_info_plus: .*/package_info_plus: ^4.2.0/g' pubspec.yaml
+          if ! grep -q "dependency_overrides" pubspec.yaml; then
+            echo "" >> pubspec.yaml
+            echo "dependency_overrides:" >> pubspec.yaml
+            echo "  package_info_plus: ^4.2.0" >> pubspec.yaml
+          else
+            sed -i '/dependency_overrides:/a\  package_info_plus: ^4.2.0' pubspec.yaml
           fi
+          cat pubspec.yaml | tail -10
 
       - name: Fix Gradle wrapper
         run: |
