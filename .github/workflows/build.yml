@@ -80,6 +80,78 @@ jobs:
             echo "Created google-services.json for $PKG"
           fi
 
+      # --- TAMBAHAN: bikin keystore dummy buat signing release ---
+      - name: Create dummy keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore /tmp/dummy.jks \
+            -alias dummy \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass dummypass \
+            -keypass dummypass \
+            -dname "CN=Dummy, OU=Dummy, O=Dummy, L=Dummy, ST=Dummy, C=US"
+
+      # --- TAMBAHAN: inject key.properties ke android/ ---
+      - name: Inject key.properties
+        run: |
+          ANDROID_DIR=$(find project -path "*/android" -type d 2>/dev/null | head -1)
+          if [ -n "$ANDROID_DIR" ]; then
+            cat > "$ANDROID_DIR/key.properties" <<EOF
+          storePassword=dummypass
+          keyPassword=dummypass
+          keyAlias=dummy
+          storeFile=/tmp/dummy.jks
+          EOF
+            echo "key.properties written to $ANDROID_DIR"
+          fi
+
+      # --- TAMBAHAN: patch build.gradle / build.gradle.kts kalau signing block belum ada ---
+      - name: Patch signing config into build.gradle
+        run: |
+          GRADLE=$(find project/android/app -name "build.gradle" -o -name "build.gradle.kts" 2>/dev/null | head -1)
+          if [ -z "$GRADLE" ]; then echo "No app build.gradle found"; exit 0; fi
+          echo "Patching: $GRADLE"
+
+          if grep -q "signingConfigs" "$GRADLE"; then
+            echo "signingConfigs already present, skipping patch"
+          else
+            # Groovy DSL
+            if [[ "$GRADLE" == *.gradle ]]; then
+              sed -i '/^android {/a \
+            signingConfigs {\
+                release {\
+                    def props = new Properties()\
+                    def propFile = rootProject.file("key.properties")\
+                    if (propFile.exists()) props.load(new FileInputStream(propFile))\
+                    storeFile props["storeFile"] ? file(props["storeFile"]) : null\
+                    storePassword props["storePassword"] ?: ""\
+                    keyAlias props["keyAlias"] ?: ""\
+                    keyPassword props["keyPassword"] ?: ""\
+                }\
+            }' "$GRADLE"
+              sed -i 's/buildTypes {/buildTypes {\n        release { signingConfig signingConfigs.release }/' "$GRADLE"
+            fi
+
+            # Kotlin DSL
+            if [[ "$GRADLE" == *.kts ]]; then
+              sed -i '/^android {/a \
+            signingConfigs {\
+                create("release") {\
+                    val props = java.util.Properties()\
+                    val f = rootProject.file("key.properties")\
+                    if (f.exists()) props.load(f.inputStream())\
+                    storeFile = props["storeFile"]?.let { file(it) }\
+                    storePassword = props["storePassword"] as String?\
+                    keyAlias = props["keyAlias"] as String?\
+                    keyPassword = props["keyPassword"] as String?\
+                }\
+            }' "$GRADLE"
+              sed -i 's/buildTypes {/buildTypes {\n        getByName("release") { signingConfig = signingConfigs.getByName("release") }/' "$GRADLE"
+            fi
+          fi
+
       - name: Get dependencies
         working-directory: project
         run: flutter pub get
@@ -88,9 +160,11 @@ jobs:
         working-directory: project
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            flutter build apk --debug
+            flutter build apk --debug --stacktrace
           else
-            flutter build apk --release
+            # --stacktrace biar log lengkap kalau masih gagal
+            flutter build apk --release --stacktrace || \
+            flutter build apk --release --no-shrink --stacktrace
           fi
 
       - name: Upload APK artifact
