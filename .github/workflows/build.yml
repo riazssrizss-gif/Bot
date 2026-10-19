@@ -98,7 +98,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: apk-build
-          path: |
-            project/build/app/outputs/flutter-apk/*.apk
-            project/build/app/outputs/apk/**/*.apk
+          path: project/build/app/outputs/**/*.apk
           if-no-files-found: error
