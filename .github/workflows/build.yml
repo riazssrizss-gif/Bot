@@ -86,9 +86,9 @@ jobs:
         working-directory: project
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            flutter build apk --debug
+            flutter build apk --debug --verbose 2>&1 | tail -100
           else
-            flutter build apk --release
+            flutter build apk --release --verbose 2>&1 | tail -100
           fi
 
       - name: Upload APK artifact
