@@ -77,6 +77,24 @@ jobs:
             cat "$FILE"
           fi
 
+      - name: Pin Android Gradle Plugin
+        working-directory: project
+        run: |
+          FILE=$(find . -name "build.gradle.kts" -path "*/android/build.gradle.kts" | head -1)
+          if [ -n "$FILE" ]; then
+            sed -i 's/com\.android\.tools\.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.1.4/g' "$FILE"
+            sed -i 's/id("com\.android\.application") version "[0-9.]*"/id("com.android.application") version "8.1.4"/g' "$FILE"
+            echo "=== android/build.gradle.kts after patch ==="
+            cat "$FILE"
+          fi
+          SFILE=$(find . -name "settings.gradle.kts" | head -1)
+          if [ -n "$SFILE" ]; then
+            sed -i 's/com\.android\.tools\.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.1.4/g' "$SFILE"
+            sed -i 's/id("com\.android\.application") version "[0-9.]*"/id("com.android.application") version "8.1.4"/g' "$SFILE"
+            echo "=== settings.gradle.kts after patch ==="
+            cat "$SFILE"
+          fi
+
       - name: Setup NDK
         run: |
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" || true
