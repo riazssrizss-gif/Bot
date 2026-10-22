@@ -2,174 +2,42 @@ name: Build Flutter APK
 
 on:
   workflow_dispatch:
-    inputs:
-      zip_url:
-        description: "URL download ZIP project Flutter"
-        required: true
-        default: ""
-      tag:
-        description: "Tag release"
-        required: false
-        default: ""
-      build_type:
-        description: "debug atau release"
-        required: false
-        default: "release"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: master
+          channel: stable
           cache: true
 
-      - name: Download source ZIP
-        run: |
-          set -e
-          URL="${{ github.event.inputs.zip_url }}"
-          curl -L -o project.zip "$URL"
-          if [ ! -s project.zip ]; then exit 1; fi
-          mkdir -p project
-          unzip -q project.zip -d project
-          if [ ! -f project/pubspec.yaml ]; then
-            DIR=$(find project -name pubspec.yaml 2>/dev/null | head -1 | xargs dirname)
-            if [ -n "$DIR" ]; then cp -a "$DIR"/. project/; fi
-          fi
-          test -f project/pubspec.yaml
-
-      - name: Relax SDK constraint
-        working-directory: project
-        run: |
-          sed -i 's/sdk: "\^[0-9.]*"/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
-          sed -i "s/sdk: '\^[0-9.]*'/sdk: '>=3.0.0 <4.0.0'/g" pubspec.yaml
-          sed -i 's/sdk: \^[0-9.]*/sdk: ">=3.0.0 <4.0.0"/g' pubspec.yaml
-
-      - name: Fix Gradle wrapper
-        run: |
-          FILE=$(find project -name "gradle-wrapper.properties" 2>/dev/null | head -1)
-          if [ -n "$FILE" ]; then
-            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.12-all.zip|g' "$FILE"
-            cat "$FILE"
-          fi
-
-      - name: Setup NDK
-        run: |
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973" || true
-
-      - name: Create dummy google-services.json
-        run: |
-          APP_DIR=$(find project -path "*/android/app" -type d 2>/dev/null | head -1)
-          PKG=$(grep -r "applicationId" project/android/app/build.gradle.kts 2>/dev/null | grep -o '"[^"]*"' | tr -d '"' | head -1)
-          if [ -z "$PKG" ]; then PKG="com.example.app"; fi
-          echo "Package: $PKG"
-          if [ -n "$APP_DIR" ] && [ ! -f "$APP_DIR/google-services.json" ]; then
-            echo "{\"project_info\":{\"project_number\":\"000000000000\",\"project_id\":\"dummy-project\",\"storage_bucket\":\"dummy-project.appspot.com\"},\"client\":[{\"client_info\":{\"mobilesdk_app_id\":\"1:000000000000:android:0000000000000000\",\"android_client_info\":{\"package_name\":\"$PKG\"}},\"oauth_client\":[],\"api_key\":[{\"current_key\":\"dummy\"}],\"services\":{\"appinvite_service\":{\"other_platform_oauth_client\":[]}}}],\"configuration_version\":\"1\"}" > "$APP_DIR/google-services.json"
-            echo "Created google-services.json for $PKG"
-          fi
-
-      # --- TAMBAHAN: bikin keystore dummy buat signing release ---
-      - name: Create dummy keystore
-        run: |
-          keytool -genkeypair -v \
-            -keystore /tmp/dummy.jks \
-            -alias dummy \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass dummypass \
-            -keypass dummypass \
-            -dname "CN=Dummy, OU=Dummy, O=Dummy, L=Dummy, ST=Dummy, C=US"
-
-      # --- TAMBAHAN: inject key.properties ke android/ ---
-      - name: Inject key.properties
-        run: |
-          ANDROID_DIR=$(find project -path "*/android" -type d 2>/dev/null | head -1)
-          if [ -n "$ANDROID_DIR" ]; then
-            cat > "$ANDROID_DIR/key.properties" <<EOF
-          storePassword=dummypass
-          keyPassword=dummypass
-          keyAlias=dummy
-          storeFile=/tmp/dummy.jks
-          EOF
-            echo "key.properties written to $ANDROID_DIR"
-          fi
-
-      # --- TAMBAHAN: patch build.gradle / build.gradle.kts kalau signing block belum ada ---
-      - name: Patch signing config into build.gradle
-        run: |
-          GRADLE=$(find project/android/app -name "build.gradle" -o -name "build.gradle.kts" 2>/dev/null | head -1)
-          if [ -z "$GRADLE" ]; then echo "No app build.gradle found"; exit 0; fi
-          echo "Patching: $GRADLE"
-
-          if grep -q "signingConfigs" "$GRADLE"; then
-            echo "signingConfigs already present, skipping patch"
-          else
-            # Groovy DSL
-            if [[ "$GRADLE" == *.gradle ]]; then
-              sed -i '/^android {/a \
-            signingConfigs {\
-                release {\
-                    def props = new Properties()\
-                    def propFile = rootProject.file("key.properties")\
-                    if (propFile.exists()) props.load(new FileInputStream(propFile))\
-                    storeFile props["storeFile"] ? file(props["storeFile"]) : null\
-                    storePassword props["storePassword"] ?: ""\
-                    keyAlias props["keyAlias"] ?: ""\
-                    keyPassword props["keyPassword"] ?: ""\
-                }\
-            }' "$GRADLE"
-              sed -i 's/buildTypes {/buildTypes {\n        release { signingConfig signingConfigs.release }/' "$GRADLE"
-            fi
-
-            # Kotlin DSL
-            if [[ "$GRADLE" == *.kts ]]; then
-              sed -i '/^android {/a \
-            signingConfigs {\
-                create("release") {\
-                    val props = java.util.Properties()\
-                    val f = rootProject.file("key.properties")\
-                    if (f.exists()) props.load(f.inputStream())\
-                    storeFile = props["storeFile"]?.let { file(it) }\
-                    storePassword = props["storePassword"] as String?\
-                    keyAlias = props["keyAlias"] as String?\
-                    keyPassword = props["keyPassword"] as String?\
-                }\
-            }' "$GRADLE"
-              sed -i 's/buildTypes {/buildTypes {\n        getByName("release") { signingConfig = signingConfigs.getByName("release") }/' "$GRADLE"
-            fi
-          fi
-
-      - name: Get dependencies
-        working-directory: project
+      - name: Install dependencies
         run: flutter pub get
 
       - name: Build APK
-        working-directory: project
-        run: |
-          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            flutter build apk --debug --stacktrace
-          else
-            # --stacktrace biar log lengkap kalau masih gagal
-            flutter build apk --release --stacktrace || \
-            flutter build apk --release --no-shrink --stacktrace
-          fi
+        run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk-build
-          path: project/build/app/outputs/**/*.apk
+          name: flutter-release-apk
+          path: build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
