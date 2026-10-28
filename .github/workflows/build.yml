@@ -51,6 +51,7 @@ jobs:
         working-directory: project
         run: |
           rm -f pubspec.lock
+          flutter pub add geolocator:^13.0.0
           flutter pub get
 
       - name: Build APK
