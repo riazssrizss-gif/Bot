@@ -57,12 +57,14 @@ jobs:
         working-directory: project
         run: flutter pub get
 
-      - name: Fix geolocator
+      - name: Fix flutter packages
         run: |
-          FILE=$(find ~/.pub-cache -path "*/geolocator_android-4.6.2/android/build.gradle" | head -1)
-          sed -i 's/flutter.compileSdkVersion/34/' "$FILE"
-          sed -i 's/flutter.targetSdkVersion/34/' "$FILE"
-          sed -i 's/flutter.minSdkVersion/21/' "$FILE"
+          find ~/.pub-cache -name "build.gradle" | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" | while read FILE; do
+            sed -i 's/flutter\.compileSdkVersion/34/g' "$FILE"
+            sed -i 's/flutter\.targetSdkVersion/34/g' "$FILE"
+            sed -i 's/flutter\.minSdkVersion/21/g' "$FILE"
+            echo "Patched: $FILE"
+          done
 
       - name: Build APK
         working-directory: project
