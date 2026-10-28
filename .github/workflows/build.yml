@@ -36,8 +36,14 @@ jobs:
           channel: 'stable'
 
       - name: Download project ZIP
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -L -o project.zip "${{ github.event.inputs.zip_url }}"
+          curl -L \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            -o project.zip \
+            "${{ github.event.inputs.zip_url }}"
           unzip -q project.zip -d project
           if [ ! -f project/pubspec.yaml ]; then
             DIR=$(find project -name pubspec.yaml | head -1 | xargs dirname)
@@ -49,9 +55,7 @@ jobs:
 
       - name: Get dependencies
         working-directory: project
-        run: |
-          rm -f pubspec.lock
-          flutter pub get
+        run: flutter pub get
 
       - name: Fix geolocator
         run: |
