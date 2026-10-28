@@ -70,6 +70,16 @@ jobs:
             echo "Patched: $FILE"
           done
 
+      - name: Fix build.gradle.kts
+        working-directory: project
+        run: |
+          FILE="android/app/build.gradle.kts"
+          if [ -f "$FILE" ]; then
+            sed -i 's/versionCode = flutter\.versionCode/versionCode = flutter.versionCode.toInteger()/' "$FILE"
+            sed -i 's/versionName = flutter\.versionName/versionName = flutter.versionName.toString()/' "$FILE"
+            echo "Patched: $FILE"
+          fi
+
       - name: Build APK
         working-directory: project
         run: |
