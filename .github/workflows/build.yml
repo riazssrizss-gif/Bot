@@ -51,8 +51,14 @@ jobs:
         working-directory: project
         run: |
           rm -f pubspec.lock
-          flutter pub add geolocator:^13.0.0
           flutter pub get
+
+      - name: Fix geolocator
+        run: |
+          FILE=$(find ~/.pub-cache -path "*/geolocator_android-4.6.2/android/build.gradle" | head -1)
+          sed -i 's/flutter.compileSdkVersion/34/' "$FILE"
+          sed -i 's/flutter.targetSdkVersion/34/' "$FILE"
+          sed -i 's/flutter.minSdkVersion/21/' "$FILE"
 
       - name: Build APK
         working-directory: project
