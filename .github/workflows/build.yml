@@ -39,11 +39,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -L \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
+          curl -fsSL \
+            -H "Authorization: token ${GH_TOKEN}" \
             -H "Accept: application/octet-stream" \
+            --location-trusted \
             -o project.zip \
             "${{ github.event.inputs.zip_url }}"
+          file project.zip
           unzip -q project.zip -d project
           if [ ! -f project/pubspec.yaml ]; then
             DIR=$(find project -name pubspec.yaml | head -1 | xargs dirname)
