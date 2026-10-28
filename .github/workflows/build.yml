@@ -61,21 +61,38 @@ jobs:
 
       - name: Fix flutter packages
         run: |
+          # Patch .pub-cache — naikan minSdk ke 24 biar kompatibel flutter_tts dll
           find ~/.pub-cache -name "build.gradle" | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" | while read FILE; do
             sed -i 's/flutter\.compileSdkVersion/34/g' "$FILE"
             sed -i 's/flutter\.targetSdkVersion/34/g' "$FILE"
             sed -i 's/flutter\.minSdkVersion/21/g' "$FILE"
-            echo "Patched: $FILE"
+            echo "Patched pub-cache: $FILE"
           done
 
-      - name: Fix build.gradle.kts
+      - name: Fix project build.gradle minSdk
         working-directory: project
         run: |
-          FILE="android/app/build.gradle.kts"
-          if [ -f "$FILE" ]; then
-            sed -i 's/versionCode = flutter\.versionCode.*/versionCode = 1/' "$FILE"
-            sed -i 's/versionName = flutter\.versionName.*/versionName = "1.0"/' "$FILE"
-            echo "Patched: $FILE"
+          # Patch build.gradle (Groovy)
+          GRADLE="android/app/build.gradle"
+          if [ -f "$GRADLE" ]; then
+            # Kalau ada baris minSdkVersion eksplisit → ganti
+            if grep -q "minSdkVersion" "$GRADLE"; then
+              sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/' "$GRADLE"
+            else
+              # Kalau pakai flutter.minSdkVersion → override
+              sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 24/' "$GRADLE"
+            fi
+            echo "Patched: $GRADLE"
+          fi
+
+          # Patch build.gradle.kts (Kotlin DSL)
+          GRADLE_KTS="android/app/build.gradle.kts"
+          if [ -f "$GRADLE_KTS" ]; then
+            sed -i 's/minSdk\s*=\s*flutter\.minSdkVersion/minSdk = 24/' "$GRADLE_KTS"
+            sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/' "$GRADLE_KTS"
+            sed -i 's/versionCode = flutter\.versionCode.*/versionCode = 1/' "$GRADLE_KTS"
+            sed -i 's/versionName = flutter\.versionName.*/versionName = "1.0"/' "$GRADLE_KTS"
+            echo "Patched: $GRADLE_KTS"
           fi
 
       - name: Build APK
