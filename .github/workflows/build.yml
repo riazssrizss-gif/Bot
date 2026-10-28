@@ -1,43 +1,65 @@
-name: Build Flutter APK
+name: Flutter Build APK
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
+    inputs:
+      zip_url:
+        description: 'URL download ZIP project Flutter'
+        required: true
+        type: string
+      tag:
+        description: 'Tag release'
+        required: true
+        type: string
+      build_type:
+        description: 'debug atau release'
+        required: true
+        default: 'release'
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          cache: true
+          flutter-version: '3.24.0'
+          channel: 'stable'
 
-      - name: Install dependencies
+      - name: Download project ZIP
+        run: |
+          curl -L -o project.zip "${{ github.event.inputs.zip_url }}"
+          unzip -q project.zip -d project
+          # Kalau ZIP berisi folder di dalamnya, cari pubspec.yaml
+          if [ ! -f project/pubspec.yaml ]; then
+            DIR=$(find project -name pubspec.yaml | head -1 | xargs dirname)
+            if [ -n "$DIR" ]; then
+              mv "$DIR"/* project/ 2>/dev/null || true
+              mv "$DIR"/.* project/ 2>/dev/null || true
+            fi
+          fi
+
+      - name: Get dependencies
+        working-directory: project
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release
+        working-directory: project
+        run: |
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
+            flutter build apk --debug
+          else
+            flutter build apk --release
+          fi
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-release-apk
-          path: build/app/outputs/flutter-apk/*.apk
+          name: apk-build
+          path: |
+            project/build/app/outputs/flutter-apk/*.apk
+            project/build/app/outputs/apk/**/*.apk
           if-no-files-found: error
