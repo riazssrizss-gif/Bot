@@ -75,8 +75,8 @@ jobs:
         run: |
           FILE="android/app/build.gradle.kts"
           if [ -f "$FILE" ]; then
-            sed -i 's/versionCode = flutter\.versionCode/versionCode = flutter.versionCode.toInteger()/' "$FILE"
-            sed -i 's/versionName = flutter\.versionName/versionName = flutter.versionName.toString()/' "$FILE"
+            sed -i 's/versionCode = flutter\.versionCode.*/versionCode = 1/' "$FILE"
+            sed -i 's/versionName = flutter\.versionName.*/versionName = "1.0"/' "$FILE"
             echo "Patched: $FILE"
           fi
 
