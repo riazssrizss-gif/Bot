@@ -26,14 +26,13 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.6'
+          flutter-version: '3.24.5'
           channel: 'stable'
 
       - name: Download project ZIP
         run: |
           curl -L -o project.zip "${{ github.event.inputs.zip_url }}"
           unzip -q project.zip -d project
-          # Kalau ZIP berisi folder di dalamnya, cari pubspec.yaml
           if [ ! -f project/pubspec.yaml ]; then
             DIR=$(find project -name pubspec.yaml | head -1 | xargs dirname)
             if [ -n "$DIR" ]; then
