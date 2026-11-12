@@ -32,8 +32,14 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.32.0'   # Dart 3.8.x — fix syntax_phantom ^3.8.1
+          flutter-version: '3.32.2'   # Dart 3.8.2 — support syntax_phantom ^3.8.1
           channel: 'stable'
+
+      - name: Set build dir
+        run: |
+          BUILD_DIR="${GITHUB_WORKSPACE}/build_${{ github.run_id }}"
+          echo "BUILD_DIR=${BUILD_DIR}" >> $GITHUB_ENV
+          mkdir -p "${BUILD_DIR}"
 
       - name: Download project ZIP
         env:
@@ -42,34 +48,42 @@ jobs:
           curl -fsSL \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Accept: application/octet-stream" \
-            -o project.zip \
+            -o "${BUILD_DIR}/project.zip" \
             "${{ github.event.inputs.zip_url }}"
-          unzip -q project.zip -d project
-          if [ ! -f project/pubspec.yaml ]; then
-            DIR=$(find project -name pubspec.yaml | head -1 | xargs dirname)
+
+          unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project"
+
+          if [ ! -f "${BUILD_DIR}/project/pubspec.yaml" ]; then
+            DIR=$(find "${BUILD_DIR}/project" -name "pubspec.yaml" | head -1 | xargs dirname)
             if [ -n "$DIR" ]; then
-              mv "$DIR"/* project/ 2>/dev/null || true
-              mv "$DIR"/.* project/ 2>/dev/null || true
+              shopt -s dotglob
+              mv "$DIR"/* "${BUILD_DIR}/project/" 2>/dev/null || true
+              shopt -u dotglob
             fi
           fi
 
       - name: Get dependencies
-        working-directory: project
+        working-directory: ${{ env.BUILD_DIR }}/project
         run: |
+          # Hapus constraint flutter_lints & syntax_phantom biar resolved otomatis
           sed -i 's/flutter_lints:.*$/flutter_lints: ^4.0.0/' pubspec.yaml
+          sed -i '/syntax_phantom:/d' pubspec.yaml
+
           flutter pub get || flutter pub upgrade --major-versions
 
-      - name: Fix flutter packages
+      - name: Fix pub-cache build.gradle
         run: |
-          find ~/.pub-cache -name "build.gradle" | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" | while read FILE; do
-            sed -i 's/flutter\.compileSdkVersion/34/g' "$FILE"
-            sed -i 's/flutter\.targetSdkVersion/34/g' "$FILE"
-            sed -i 's/flutter\.minSdkVersion/21/g' "$FILE"
-            echo "Patched pub-cache: $FILE"
-          done
+          find ~/.pub-cache -name "build.gradle" \
+            | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" 2>/dev/null \
+            | while read FILE; do
+              sed -i 's/flutter\.compileSdkVersion/34/g' "$FILE"
+              sed -i 's/flutter\.targetSdkVersion/34/g' "$FILE"
+              sed -i 's/flutter\.minSdkVersion/21/g' "$FILE"
+              echo "Patched pub-cache: $FILE"
+            done
 
-      - name: Fix project build.gradle minSdk
-        working-directory: project
+      - name: Fix project minSdk
+        working-directory: ${{ env.BUILD_DIR }}/project
         run: |
           GRADLE="android/app/build.gradle"
           if [ -f "$GRADLE" ]; then
@@ -91,7 +105,7 @@ jobs:
           fi
 
       - name: Build APK
-        working-directory: project
+        working-directory: ${{ env.BUILD_DIR }}/project
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             flutter build apk --debug
@@ -99,11 +113,23 @@ jobs:
             flutter build apk --release
           fi
 
+      - name: Rename APK with tag
+        run: |
+          APK_DIR="${BUILD_DIR}/project/build/app/outputs/flutter-apk"
+          TAG="${{ github.event.inputs.tag }}"
+          for APK in "$APK_DIR"/*.apk; do
+            [ -f "$APK" ] || continue
+            BASENAME=$(basename "$APK" .apk)
+            mv "$APK" "$APK_DIR/${BASENAME}-${TAG}.apk"
+            echo "Renamed: ${BASENAME}-${TAG}.apk"
+          done
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk-build
+          name: apk-${{ github.event.inputs.tag }}-${{ github.run_id }}
           path: |
-            project/build/app/outputs/flutter-apk/*.apk
-            project/build/app/outputs/apk/**/*.apk
+            ${{ env.BUILD_DIR }}/project/build/app/outputs/flutter-apk/*.apk
+            ${{ env.BUILD_DIR }}/project/build/app/outputs/apk/**/*.apk
           if-no-files-found: error
+          retention-days: 7
