@@ -32,7 +32,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.4'
+          flutter-version: '3.32.0'   # Dart 3.8.x — fix syntax_phantom ^3.8.1
           channel: 'stable'
 
       - name: Download project ZIP
@@ -57,11 +57,10 @@ jobs:
         working-directory: project
         run: |
           sed -i 's/flutter_lints:.*$/flutter_lints: ^4.0.0/' pubspec.yaml
-          flutter pub get
+          flutter pub get || flutter pub upgrade --major-versions
 
       - name: Fix flutter packages
         run: |
-          # Patch .pub-cache — naikan minSdk ke 24 biar kompatibel flutter_tts dll
           find ~/.pub-cache -name "build.gradle" | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" | while read FILE; do
             sed -i 's/flutter\.compileSdkVersion/34/g' "$FILE"
             sed -i 's/flutter\.targetSdkVersion/34/g' "$FILE"
@@ -72,20 +71,16 @@ jobs:
       - name: Fix project build.gradle minSdk
         working-directory: project
         run: |
-          # Patch build.gradle (Groovy)
           GRADLE="android/app/build.gradle"
           if [ -f "$GRADLE" ]; then
-            # Kalau ada baris minSdkVersion eksplisit → ganti
             if grep -q "minSdkVersion" "$GRADLE"; then
               sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/' "$GRADLE"
             else
-              # Kalau pakai flutter.minSdkVersion → override
               sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 24/' "$GRADLE"
             fi
             echo "Patched: $GRADLE"
           fi
 
-          # Patch build.gradle.kts (Kotlin DSL)
           GRADLE_KTS="android/app/build.gradle.kts"
           if [ -f "$GRADLE_KTS" ]; then
             sed -i 's/minSdk\s*=\s*flutter\.minSdkVersion/minSdk = 24/' "$GRADLE_KTS"
