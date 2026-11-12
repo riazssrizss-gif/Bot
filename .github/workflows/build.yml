@@ -35,13 +35,6 @@ jobs:
           flutter-version: '3.27.4'
           channel: 'stable'
 
-      - name: Set build dir
-        run: |
-          # Tiap run punya folder sendiri — nggak tabrakan kalau parallel
-          BUILD_DIR="${GITHUB_WORKSPACE}/build_${{ github.run_id }}"
-          echo "BUILD_DIR=${BUILD_DIR}" >> $GITHUB_ENV
-          mkdir -p "${BUILD_DIR}"
-
       - name: Download project ZIP
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,51 +42,50 @@ jobs:
           curl -fsSL \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Accept: application/octet-stream" \
-            -o "${BUILD_DIR}/project.zip" \
+            -o project.zip \
             "${{ github.event.inputs.zip_url }}"
-
-          unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project"
-
-          # Pastikan pubspec.yaml ada di root
-          if [ ! -f "${BUILD_DIR}/project/pubspec.yaml" ]; then
-            DIR=$(find "${BUILD_DIR}/project" -name "pubspec.yaml" | head -1 | xargs dirname)
+          unzip -q project.zip -d project
+          if [ ! -f project/pubspec.yaml ]; then
+            DIR=$(find project -name pubspec.yaml | head -1 | xargs dirname)
             if [ -n "$DIR" ]; then
-              shopt -s dotglob
-              mv "$DIR"/* "${BUILD_DIR}/project/" 2>/dev/null || true
-              shopt -u dotglob
+              mv "$DIR"/* project/ 2>/dev/null || true
+              mv "$DIR"/.* project/ 2>/dev/null || true
             fi
           fi
 
       - name: Get dependencies
-        working-directory: ${{ env.BUILD_DIR }}/project
+        working-directory: project
         run: |
           sed -i 's/flutter_lints:.*$/flutter_lints: ^4.0.0/' pubspec.yaml
           flutter pub get
 
-      - name: Fix pub-cache build.gradle
+      - name: Fix flutter packages
         run: |
-          find ~/.pub-cache -name "build.gradle" | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" 2>/dev/null | while read FILE; do
+          # Patch .pub-cache — naikan minSdk ke 24 biar kompatibel flutter_tts dll
+          find ~/.pub-cache -name "build.gradle" | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" | while read FILE; do
             sed -i 's/flutter\.compileSdkVersion/34/g' "$FILE"
             sed -i 's/flutter\.targetSdkVersion/34/g' "$FILE"
             sed -i 's/flutter\.minSdkVersion/21/g' "$FILE"
             echo "Patched pub-cache: $FILE"
           done
 
-      - name: Fix project minSdk
-        working-directory: ${{ env.BUILD_DIR }}/project
+      - name: Fix project build.gradle minSdk
+        working-directory: project
         run: |
-          # Groovy DSL
+          # Patch build.gradle (Groovy)
           GRADLE="android/app/build.gradle"
           if [ -f "$GRADLE" ]; then
+            # Kalau ada baris minSdkVersion eksplisit → ganti
             if grep -q "minSdkVersion" "$GRADLE"; then
               sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/' "$GRADLE"
             else
+              # Kalau pakai flutter.minSdkVersion → override
               sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 24/' "$GRADLE"
             fi
             echo "Patched: $GRADLE"
           fi
 
-          # Kotlin DSL
+          # Patch build.gradle.kts (Kotlin DSL)
           GRADLE_KTS="android/app/build.gradle.kts"
           if [ -f "$GRADLE_KTS" ]; then
             sed -i 's/minSdk\s*=\s*flutter\.minSdkVersion/minSdk = 24/' "$GRADLE_KTS"
@@ -104,7 +96,7 @@ jobs:
           fi
 
       - name: Build APK
-        working-directory: ${{ env.BUILD_DIR }}/project
+        working-directory: project
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             flutter build apk --debug
@@ -112,27 +104,11 @@ jobs:
             flutter build apk --release
           fi
 
-      - name: Rename APK with tag
-        run: |
-          APK_DIR="${BUILD_DIR}/project/build/app/outputs/flutter-apk"
-          TAG="${{ github.event.inputs.tag }}"
-          TYPE="${{ github.event.inputs.build_type }}"
-
-          # Rename APK biar tiap build punya nama unik
-          for APK in "$APK_DIR"/*.apk; do
-            [ -f "$APK" ] || continue
-            BASENAME=$(basename "$APK" .apk)
-            mv "$APK" "$APK_DIR/${BASENAME}-${TAG}.apk"
-            echo "Renamed: ${BASENAME}-${TAG}.apk"
-          done
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          # Nama unik per run — nggak bakal tiban build orang lain
-          name: apk-${{ github.event.inputs.tag }}-${{ github.run_id }}
+          name: apk-build
           path: |
-            ${{ env.BUILD_DIR }}/project/build/app/outputs/flutter-apk/*.apk
-            ${{ env.BUILD_DIR }}/project/build/app/outputs/apk/**/*.apk
+            project/build/app/outputs/flutter-apk/*.apk
+            project/build/app/outputs/apk/**/*.apk
           if-no-files-found: error
-          retention-days: 7
