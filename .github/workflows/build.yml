@@ -6,7 +6,7 @@ on:
       mode:
         description: 'native atau flutter'
         required: true
-        default: 'native'
+        default: 'flutter'
         type: choice
         options:
           - native
@@ -19,6 +19,11 @@ on:
         description: 'Tag release'
         required: false
         default: 'build'
+        type: string
+      build_type:
+        description: 'debug atau release'
+        required: false
+        default: 'release'
         type: string
 
 jobs:
@@ -84,16 +89,41 @@ jobs:
           sed -i 's/flutter_lints:.*$/flutter_lints: ^4.0.0/' pubspec.yaml
           flutter pub get || flutter pub upgrade --major-versions
 
+      - name: Fix minSdk
+        if: github.event.inputs.mode == 'flutter'
+        working-directory: build_dir/project
+        run: |
+          GRADLE="android/app/build.gradle"
+          [ -f "$GRADLE" ] && sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/' "$GRADLE"
+          GRADLE_KTS="android/app/build.gradle.kts"
+          [ -f "$GRADLE_KTS" ] && sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/' "$GRADLE_KTS"
+
       - name: Build Flutter APK
         if: github.event.inputs.mode == 'flutter'
         working-directory: build_dir/project
-        run: flutter build apk --release
+        run: |
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
+            flutter build apk --debug
+          else
+            flutter build apk --release
+          fi
+
+      - name: Rename Flutter APK
+        if: github.event.inputs.mode == 'flutter'
+        run: |
+          APK_DIR="build_dir/project/build/app/outputs/flutter-apk"
+          TAG="${{ github.event.inputs.tag }}"
+          for APK in "$APK_DIR"/*.apk; do
+            [ -f "$APK" ] || continue
+            BASENAME=$(basename "$APK" .apk)
+            mv "$APK" "$APK_DIR/${BASENAME}-${TAG}.apk"
+          done
 
       - name: Upload Flutter APK
         if: github.event.inputs.mode == 'flutter'
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-apk-${{ github.event.inputs.tag }}
+          name: flutter-apk-${{ github.event.inputs.tag }}-${{ github.run_id }}
           path: |
             build_dir/project/build/app/outputs/flutter-apk/*.apk
             build_dir/project/build/app/outputs/apk/**/*.apk
