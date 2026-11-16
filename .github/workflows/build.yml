@@ -1,3 +1,5 @@
+# .github/workflows/build.yml
+
 name: Flutter & Native Build APK
 
 on:
@@ -7,10 +9,12 @@ on:
         description: 'URL download ZIP project'
         required: true
         type: string
+
       tag:
         description: 'Tag release'
         required: true
         type: string
+
       build_type:
         description: 'debug atau release'
         required: true
@@ -28,9 +32,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
+    env:
+      BUILD_DIR: ${{ github.workspace }}/build_${{ github.run_id }}
+      BUILD_TYPE: ${{ inputs.build_type }}
+      BUILD_TAG: ${{ inputs.tag }}
+
     steps:
+
       # ==========================================
-      # JAVA
+      # 1. JAVA SETUP
       # ==========================================
 
       - name: Setup Java
@@ -40,53 +50,50 @@ jobs:
           java-version: '17'
 
       # ==========================================
-      # BUILD DIRECTORY
+      # 2. BUILD DIRECTORY
       # ==========================================
 
-      - name: Set build dir
+      - name: Set build directory
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          BUILD_DIR="${GITHUB_WORKSPACE}/build_${GITHUB_RUN_ID}"
-
-          echo "BUILD_DIR=${BUILD_DIR}" >> "$GITHUB_ENV"
-
           mkdir -p "$BUILD_DIR/project"
           mkdir -p "$BUILD_DIR/output"
 
+          echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_ENV"
+
       # ==========================================
-      # DOWNLOAD ZIP
+      # 3. DOWNLOAD PROJECT ZIP
       # ==========================================
 
       - name: Download project ZIP
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZIP_URL: ${{ inputs.zip_url }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          PROJECT="${BUILD_DIR}/project"
-
-          echo "Downloading project..."
+          echo "Downloading project ZIP..."
 
           curl -fL --retry 3 \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Accept: application/octet-stream" \
-            -o "${BUILD_DIR}/project.zip" \
-            "${{ github.event.inputs.zip_url }}"
+            -o "$BUILD_DIR/project.zip" \
+            "$ZIP_URL"
 
           echo "Checking ZIP integrity..."
 
-          unzip -t "${BUILD_DIR}/project.zip"
+          unzip -t "$BUILD_DIR/project.zip"
 
-          unzip -oq "${BUILD_DIR}/project.zip" \
-            -d "$PROJECT"
+          unzip -oq "$BUILD_DIR/project.zip" \
+            -d "$BUILD_DIR/project"
 
-          echo "ZIP extracted successfully"
+          echo "ZIP successfully extracted."
 
       # ==========================================
-      # DETECT PROJECT
+      # 4. DETECT PROJECT TYPE & ROOT
       # ==========================================
 
       - name: Detect project type & root
@@ -94,18 +101,19 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          PROJECT="${BUILD_DIR}/project"
+          PROJECT="$BUILD_DIR/project"
 
-          echo "================================"
+          echo "=================================="
           echo "SCANNING PROJECT"
-          echo "================================"
+          echo "=================================="
 
-          # Flutter detection
+          # Flutter
           PUBSPEC=$(find "$PROJECT" \
             -type f \
             -name "pubspec.yaml" \
             -not -path "*/.dart_tool/*" \
             -not -path "*/build/*" \
+            -not -path "*/node_modules/*" \
             -print -quit)
 
           if [ -n "$PUBSPEC" ]; then
@@ -115,10 +123,11 @@ jobs:
 
           else
 
-            # Native Android detection
+            # Native Android
             SETTINGS=$(find "$PROJECT" \
               -type f \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              \( -name "settings.gradle" \
+              -o -name "settings.gradle.kts" \) \
               -not -path "*/.gradle/*" \
               -not -path "*/build/*" \
               -not -path "*/node_modules/*" \
@@ -129,24 +138,9 @@ jobs:
               ROOT=$(dirname "$SETTINGS")
               TYPE="native"
 
-              GRADLEW=$(find "$PROJECT" \
-                -type f \
-                -name "gradlew" \
-                -not -path "*/.gradle/*" \
-                -not -path "*/node_modules/*" \
-                -print -quit)
-
-              if [ -z "$GRADLEW" ]; then
-                echo "ERROR: gradlew tidak ditemukan"
-                find "$PROJECT" -maxdepth 5 -type f | head -100
-                exit 1
-              fi
-
-              echo "GRADLEW_PATH=${GRADLEW}" >> "$GITHUB_ENV"
-
             else
 
-              # Node.js detection
+              # Node.js
               PKG=$(find "$PROJECT" \
                 -type f \
                 -name "package.json" \
@@ -163,11 +157,8 @@ jobs:
 
                 echo "ERROR: Project configuration not found"
 
-                echo "ZIP contents:"
-                unzip -Z1 "${BUILD_DIR}/project.zip" | head -100
-
-                echo "Extracted files:"
-                find "$PROJECT" -maxdepth 6 -type f | head -150
+                echo "Project files:"
+                find "$PROJECT" -maxdepth 7 -type f | head -150
 
                 exit 1
 
@@ -175,18 +166,18 @@ jobs:
             fi
           fi
 
-          echo "PROJECT_TYPE=${TYPE}" >> "$GITHUB_ENV"
-          echo "PROJECT_DIR=${ROOT}" >> "$GITHUB_ENV"
+          echo "PROJECT_TYPE=$TYPE" >> "$GITHUB_ENV"
+          echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
 
-          echo "================================"
-          echo "PROJECT TYPE: ${TYPE}"
-          echo "PROJECT ROOT: ${ROOT}"
-          echo "================================"
+          echo "=================================="
+          echo "PROJECT TYPE: $TYPE"
+          echo "PROJECT ROOT: $ROOT"
+          echo "=================================="
 
           ls -la "$ROOT"
 
       # ==========================================
-      # FLUTTER SETUP
+      # 5. FLUTTER SETUP
       # ==========================================
 
       - name: Setup Flutter
@@ -207,64 +198,178 @@ jobs:
           flutter pub get
 
       # ==========================================
-      # FLUTTER MIN SDK
+      # 6. FLUTTER BUILD
       # ==========================================
 
-      - name: Fix project minSdk (Flutter)
+      - name: Build Flutter APK
         if: env.PROJECT_TYPE == 'flutter'
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          for GRADLE in android/app/build.gradle android/app/build.gradle.kts; do
-            [ -f "$GRADLE" ] || continue
+          flutter doctor -v
 
-            echo "Checking $GRADLE"
+          if [ "$BUILD_TYPE" = "debug" ]; then
 
-            sed -i \
-              's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' \
-              "$GRADLE"
+            flutter build apk --debug
 
-          done
+          else
+
+            flutter build apk --release
+
+          fi
 
       # ==========================================
-      # NATIVE ANDROID SETUP
+      # 7. NATIVE ANDROID SDK
       # ==========================================
 
-      - name: Setup NDK & CMake
+      - name: Setup Android SDK
         if: env.PROJECT_TYPE == 'native'
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          echo "Android SDK: $ANDROID_HOME"
 
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "$ANDROID_HOME" \
-              -type f -name sdkmanager -print -quit)
-          fi
+          SDKMANAGER=$(find "$ANDROID_HOME" \
+            -type f \
+            -name sdkmanager \
+            -print -quit)
 
-          if [ -z "$SDKMANAGER" ] || [ ! -f "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager tidak ditemukan"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
             exit 1
           fi
 
-          echo "Using: $SDKMANAGER"
+          echo "Using SDK Manager: $SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses || true
 
           "$SDKMANAGER" \
             "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "ndk;27.2.12479018" \
-            "cmake;3.22.1"
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
-          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "Android SDK setup completed."
 
       # ==========================================
-      # NODE SETUP
+      # 8. INSTALL GRADLE DIRECTLY
+      # ==========================================
+
+      - name: Setup Gradle Native
+        if: env.PROJECT_TYPE == 'native'
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          GRADLE_VERSION="8.9"
+
+          WRAPPER_FILE="gradle/wrapper/gradle-wrapper.properties"
+
+          if [ -f "$WRAPPER_FILE" ]; then
+
+            DISTRIBUTION_URL=$(grep '^distributionUrl=' \
+              "$WRAPPER_FILE" | head -1 | cut -d= -f2-)
+
+            DETECTED_VERSION=$(echo "$DISTRIBUTION_URL" \
+              | grep -oE 'gradle-[0-9]+(\.[0-9]+)*' \
+              | head -1 \
+              | sed 's/gradle-//')
+
+            if [ -n "$DETECTED_VERSION" ]; then
+              GRADLE_VERSION="$DETECTED_VERSION"
+            fi
+
+          fi
+
+          echo "Gradle version: $GRADLE_VERSION"
+
+          INSTALL_DIR="$RUNNER_TEMP/gradle-$GRADLE_VERSION"
+
+          mkdir -p "$INSTALL_DIR"
+
+          curl -fL --retry 3 \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            -o "$RUNNER_TEMP/gradle.zip"
+
+          unzip -q "$RUNNER_TEMP/gradle.zip" \
+            -d "$INSTALL_DIR"
+
+          GRADLE_HOME="$INSTALL_DIR/gradle-$GRADLE_VERSION"
+
+          if [ ! -x "$GRADLE_HOME/bin/gradle" ]; then
+            echo "ERROR: Gradle executable missing"
+            exit 1
+          fi
+
+          echo "$GRADLE_HOME/bin" >> "$GITHUB_PATH"
+
+          echo "GRADLE_HOME=$GRADLE_HOME" >> "$GITHUB_ENV"
+
+          "$GRADLE_HOME/bin/gradle" --version
+
+      # ==========================================
+      # 9. BUILD NATIVE ANDROID APK
+      # ==========================================
+
+      - name: Build Native APK
+        if: env.PROJECT_TYPE == 'native'
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "=================================="
+          echo "NATIVE ANDROID BUILD"
+          echo "=================================="
+
+          echo "Project directory:"
+          pwd
+
+          echo "Gradle:"
+          gradle --version
+
+          if [ ! -f "settings.gradle" ] && \
+             [ ! -f "settings.gradle.kts" ]; then
+
+            echo "ERROR: settings.gradle missing"
+            exit 1
+
+          fi
+
+          if [ ! -f "build.gradle" ] && \
+             [ ! -f "build.gradle.kts" ]; then
+
+            echo "ERROR: Root build.gradle missing"
+            exit 1
+
+          fi
+
+          if [ ! -d "app" ]; then
+            echo "ERROR: Android app module missing"
+            exit 1
+          fi
+
+          if [ "$BUILD_TYPE" = "debug" ]; then
+
+            gradle assembleDebug \
+              --no-daemon \
+              --stacktrace
+
+          else
+
+            gradle assembleRelease \
+              --no-daemon \
+              --stacktrace
+
+          fi
+
+          echo "Native build process completed."
+
+      # ==========================================
+      # 10. NODE SETUP
       # ==========================================
 
       - name: Setup Node.js
@@ -287,79 +392,17 @@ jobs:
           fi
 
           if node -e "process.exit(require('./package.json').scripts?.build ? 0 : 1)"; then
+
             npm run build
+
           else
+
             echo "No build script found. Skipping build."
-          fi
-
-      # ==========================================
-      # BUILD FLUTTER APK
-      # ==========================================
-
-      - name: Build Flutter APK
-        if: env.PROJECT_TYPE == 'flutter'
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          flutter doctor -v
-
-          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            flutter build apk --debug
-          else
-            flutter build apk --release
-          fi
-
-      # ==========================================
-      # BUILD NATIVE APK
-      # ==========================================
-
-      - name: Build Native APK
-        if: env.PROJECT_TYPE == 'native'
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          echo "================================"
-          echo "NATIVE ANDROID BUILD"
-          echo "================================"
-
-          echo "Project: $(pwd)"
-          echo "Gradle wrapper: ${GRADLEW_PATH}"
-
-          if [ ! -f "settings.gradle" ] && \
-             [ ! -f "settings.gradle.kts" ]; then
-            echo "ERROR: settings.gradle tidak ditemukan"
-            exit 1
-          fi
-
-          if [ ! -f "$GRADLEW_PATH" ]; then
-            echo "ERROR: Gradle wrapper tidak ditemukan"
-            exit 1
-          fi
-
-          chmod +x "$GRADLEW_PATH"
-
-          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-
-            "$GRADLEW_PATH" \
-              assembleDebug \
-              --no-daemon \
-              --stacktrace
-
-          else
-
-            "$GRADLEW_PATH" \
-              assembleRelease \
-              --no-daemon \
-              --stacktrace
 
           fi
 
       # ==========================================
-      # PACKAGE NODE
+      # 11. PACKAGE NODE
       # ==========================================
 
       - name: Package Node.js artifact
@@ -369,17 +412,16 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          TAG="${{ github.event.inputs.tag }}"
-          OUT="${BUILD_DIR}/output"
+          mkdir -p "$BUILD_DIR/output"
 
-          mkdir -p "$OUT"
-
-          zip -r "$OUT/node-${TAG}.zip" . \
+          zip -r \
+            "$BUILD_DIR/output/node-${BUILD_TAG}.zip" \
+            . \
             -x "*.git*" \
             -x "node_modules/*"
 
       # ==========================================
-      # COLLECT APK
+      # 12. COLLECT APK
       # ==========================================
 
       - name: Collect APKs
@@ -388,25 +430,27 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          TAG="${{ github.event.inputs.tag }}"
-          OUT="${BUILD_DIR}/output"
+          OUT="$BUILD_DIR/output"
 
           mkdir -p "$OUT"
 
           FOUND=0
 
+          echo "Searching APK files..."
+
           while IFS= read -r -d '' APK; do
 
             BASENAME=$(basename "$APK" .apk)
 
-            cp "$APK" "$OUT/${BASENAME}-${TAG}.apk"
+            cp "$APK" \
+              "$OUT/${BASENAME}-${BUILD_TAG}.apk"
 
-            echo "Collected: ${BASENAME}-${TAG}.apk"
+            echo "Collected: ${BASENAME}-${BUILD_TAG}.apk"
 
             FOUND=1
 
           done < <(
-            find "${PROJECT_DIR}" \
+            find "$PROJECT_DIR" \
               -type f \
               -name "*.apk" \
               -not -path "*/.gradle/*" \
@@ -415,38 +459,63 @@ jobs:
 
           if [ "$FOUND" -eq 0 ]; then
 
-            echo "ERROR: Tidak ada APK ditemukan"
+            echo "ERROR: APK not found"
 
-            find "${PROJECT_DIR}" \
-              -maxdepth 7 \
-              -type f | head -100
+            echo "Build output directories:"
+            find "$PROJECT_DIR" \
+              -type d \
+              -path "*/outputs/*" | head -100
 
             exit 1
 
           fi
 
+          echo "APK collection completed."
+
       # ==========================================
-      # UPLOAD APK
+      # 13. UPLOAD APK ARTIFACT
       # ==========================================
 
       - name: Upload APK artifact
         if: env.PROJECT_TYPE != 'node'
         uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ github.event.inputs.tag }}-${{ github.run_id }}
+          name: apk-${{ inputs.tag }}-${{ github.run_id }}
           path: ${{ env.BUILD_DIR }}/output/*.apk
           if-no-files-found: error
           retention-days: 7
 
       # ==========================================
-      # UPLOAD NODE
+      # 14. UPLOAD NODE ARTIFACT
       # ==========================================
 
       - name: Upload Node.js artifact
         if: env.PROJECT_TYPE == 'node'
         uses: actions/upload-artifact@v4
         with:
-          name: node-${{ github.event.inputs.tag }}-${{ github.run_id }}
-          path: ${{ env.BUILD_DIR }}/output/node-${{ github.event.inputs.tag }}.zip
+          name: node-${{ inputs.tag }}-${{ github.run_id }}
+          path: ${{ env.BUILD_DIR }}/output/node-${{ inputs.tag }}.zip
           if-no-files-found: error
           retention-days: 7
+
+      # ==========================================
+      # 15. BUILD SUMMARY
+      # ==========================================
+
+      - name: Build Summary
+        if: success()
+        shell: bash
+        run: |
+          echo "=================================="
+          echo "BUILD SUCCESS"
+          echo "=================================="
+
+          echo "Project: $PROJECT_TYPE"
+          echo "Build type: $BUILD_TYPE"
+          echo "Tag: $BUILD_TAG"
+
+          echo "=================================="
+          echo "OUTPUT FILES"
+          echo "=================================="
+
+          ls -lh "$BUILD_DIR/output"
