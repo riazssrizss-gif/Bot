@@ -133,15 +133,16 @@ jobs:
           done
 
       # ── Native setup ───────────────────────────────────────────────────────
-      - name: Setup Android SDK
-        if: env.PROJECT_TYPE == 'native'
-        uses: android-actions/setup-android@v3
-
-      - name: Setup NDK
+      - name: Setup NDK & CMake
         if: env.PROJECT_TYPE == 'native'
         run: |
-          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
+          echo "y" | sdkmanager \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1" \
+            "build-tools;34.0.0" \
+            "platforms;android-34" \
+            --sdk_root="${ANDROID_HOME}"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.2.12479018" >> $GITHUB_ENV
 
       - name: Patch Native build.gradle
         if: env.PROJECT_TYPE == 'native'
