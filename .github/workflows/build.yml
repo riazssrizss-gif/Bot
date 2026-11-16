@@ -12,7 +12,7 @@ on:
         description: 'Tag release'
         required: true
         type: string
-      build_mode:
+      build_type:
         description: 'debug atau release'
         required: true
         default: 'release'
@@ -55,14 +55,12 @@ jobs:
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          # Cari pubspec.yaml dulu
           PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" | head -1)
 
           if [ -n "$PUBSPEC" ]; then
             echo "PROJECT_TYPE=flutter" >> $GITHUB_ENV
-            echo "Detected: Flutter"
+            echo "✅ Detected: Flutter"
 
-            # Normalize root ke folder pubspec.yaml
             ROOT=$(dirname "$PUBSPEC")
             if [ "$ROOT" != "$PROJECT" ]; then
               shopt -s dotglob
@@ -71,14 +69,13 @@ jobs:
             fi
 
           else
-            # Cek settings.gradle / settings.gradle.kts
             SETTINGS=$(find "$PROJECT" \
               \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
               | head -1)
 
             if [ -n "$SETTINGS" ]; then
               echo "PROJECT_TYPE=native" >> $GITHUB_ENV
-              echo "Detected: Native Android"
+              echo "✅ Detected: Native Android"
 
               ROOT=$(dirname "$SETTINGS")
               if [ "$ROOT" != "$PROJECT" ]; then
@@ -87,8 +84,7 @@ jobs:
                 shopt -u dotglob
               fi
             else
-              echo "ERROR: Tidak ditemukan pubspec.yaml maupun settings.gradle"
-              echo "Isi project:"
+              echo "❌ ERROR: Tidak ditemukan pubspec.yaml maupun settings.gradle"
               find "$PROJECT" -type f | head -40
               exit 1
             fi
@@ -167,7 +163,7 @@ jobs:
         if: env.PROJECT_TYPE == 'flutter'
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
-          if [ "${{ github.event.inputs.build_mode }}" = "debug" ]; then
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             flutter build apk --debug
           else
             flutter build apk --release
@@ -178,7 +174,7 @@ jobs:
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
           chmod +x gradlew
-          if [ "${{ github.event.inputs.build_mode }}" = "debug" ]; then
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace
           else
             ./gradlew assembleRelease --no-daemon --stacktrace
@@ -201,7 +197,7 @@ jobs:
           done < <(find "${BUILD_DIR}/project" -name "*.apk" 2>/dev/null)
 
           if [ "$FOUND" -eq 0 ]; then
-            echo "ERROR: Tidak ada APK ditemukan. Isi build dir:"
+            echo "❌ ERROR: Tidak ada APK ditemukan. Isi build dir:"
             find "${BUILD_DIR}/project" -type f | head -50
             exit 1
           fi
