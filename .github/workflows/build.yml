@@ -83,10 +83,26 @@ jobs:
                 mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
                 shopt -u dotglob
               fi
+
             else
-              echo "❌ ERROR: Tidak ditemukan pubspec.yaml maupun settings.gradle"
-              find "$PROJECT" -type f | head -40
-              exit 1
+              PKG=$(find "$PROJECT" -name "package.json" -not -path "*/node_modules/*" | head -1)
+
+              if [ -n "$PKG" ]; then
+                echo "PROJECT_TYPE=node" >> $GITHUB_ENV
+                echo "✅ Detected: Node.js"
+
+                ROOT=$(dirname "$PKG")
+                if [ "$ROOT" != "$PROJECT" ]; then
+                  shopt -s dotglob
+                  mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
+                  shopt -u dotglob
+                fi
+
+              else
+                echo "❌ ERROR: Tidak ditemukan pubspec.yaml, settings.gradle, maupun package.json"
+                find "$PROJECT" -type f | head -40
+                exit 1
+              fi
             fi
           fi
 
@@ -163,6 +179,36 @@ jobs:
               echo "Patched: $GRADLE"
             done
 
+      # ── Node.js setup & build ──────────────────────────────────────────────
+      - name: Setup Node.js
+        if: env.PROJECT_TYPE == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install & Build Node.js
+        if: env.PROJECT_TYPE == 'node'
+        working-directory: ${{ env.BUILD_DIR }}/project
+        run: |
+          npm install
+          if [ "$(node -e "const p=require('./package.json'); console.log(p.scripts && p.scripts.build ? 'yes' : 'no')")" = "yes" ]; then
+            npm run build
+          else
+            echo "ℹ️ Tidak ada script build, skip. Install sukses."
+          fi
+
+      - name: Package Node.js artifact
+        if: env.PROJECT_TYPE == 'node'
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          OUT="${BUILD_DIR}/output"
+          mkdir -p "$OUT"
+          cd "${BUILD_DIR}/project"
+          zip -r "$OUT/node-${TAG}.zip" . \
+            --exclude "*.git*" \
+            --exclude "node_modules/*"
+          echo "Packaged: node-${TAG}.zip"
+
       # ── Build ──────────────────────────────────────────────────────────────
       - name: Build Flutter APK
         if: env.PROJECT_TYPE == 'flutter'
@@ -187,6 +233,7 @@ jobs:
 
       # ── Collect & upload ───────────────────────────────────────────────────
       - name: Collect APKs
+        if: env.PROJECT_TYPE != 'node'
         run: |
           TAG="${{ github.event.inputs.tag }}"
           OUT="${BUILD_DIR}/output"
@@ -208,9 +255,19 @@ jobs:
           fi
 
       - name: Upload APK artifact
+        if: env.PROJECT_TYPE != 'node'
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ github.event.inputs.tag }}-${{ github.run_id }}
           path: ${{ env.BUILD_DIR }}/output/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Node.js artifact
+        if: env.PROJECT_TYPE == 'node'
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ github.event.inputs.tag }}-${{ github.run_id }}
+          path: ${{ env.BUILD_DIR }}/output/node-${{ github.event.inputs.tag }}.zip
           if-no-files-found: error
           retention-days: 7
