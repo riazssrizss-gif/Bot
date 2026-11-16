@@ -12,11 +12,14 @@ on:
         description: 'Tag release'
         required: true
         type: string
-      build_type:
-        description: 'flutter-debug | flutter-release | native-debug | native-release'
+      build_mode:
+        description: 'debug atau release'
         required: true
-        default: 'flutter-release'
-        type: string
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
 
 jobs:
   build:
@@ -30,26 +33,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # ── Flutter setup (skip kalau native) ──────────────────────────────────
-      - name: Setup Flutter
-        if: startsWith(github.event.inputs.build_type, 'flutter')
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.32.8'
-          channel: 'stable'
-
-      # ── Android SDK setup (native) ─────────────────────────────────────────
-      - name: Setup Android SDK
-        if: startsWith(github.event.inputs.build_type, 'native')
-        uses: android-actions/setup-android@v3
-
-      - name: Setup NDK
-        if: startsWith(github.event.inputs.build_type, 'native')
-        run: |
-          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
-
-      # ── Shared: set dir & download ZIP ────────────────────────────────────
       - name: Set build dir
         run: |
           BUILD_DIR="${GITHUB_WORKSPACE}/build_${{ github.run_id }}"
@@ -68,28 +51,66 @@ jobs:
 
           unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project"
 
-      # ── Flutter: normalize pubspec root ───────────────────────────────────
-      - name: Normalize Flutter root
-        if: startsWith(github.event.inputs.build_type, 'flutter')
+      - name: Detect project type & normalize root
         run: |
-          if [ ! -f "${BUILD_DIR}/project/pubspec.yaml" ]; then
-            DIR=$(find "${BUILD_DIR}/project" -name "pubspec.yaml" | head -1 | xargs dirname)
-            if [ -n "$DIR" ]; then
+          PROJECT="${BUILD_DIR}/project"
+
+          # Cari pubspec.yaml dulu
+          PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" | head -1)
+
+          if [ -n "$PUBSPEC" ]; then
+            echo "PROJECT_TYPE=flutter" >> $GITHUB_ENV
+            echo "Detected: Flutter"
+
+            # Normalize root ke folder pubspec.yaml
+            ROOT=$(dirname "$PUBSPEC")
+            if [ "$ROOT" != "$PROJECT" ]; then
               shopt -s dotglob
-              mv "$DIR"/* "${BUILD_DIR}/project/" 2>/dev/null || true
+              mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
               shopt -u dotglob
+            fi
+
+          else
+            # Cek settings.gradle / settings.gradle.kts
+            SETTINGS=$(find "$PROJECT" \
+              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              | head -1)
+
+            if [ -n "$SETTINGS" ]; then
+              echo "PROJECT_TYPE=native" >> $GITHUB_ENV
+              echo "Detected: Native Android"
+
+              ROOT=$(dirname "$SETTINGS")
+              if [ "$ROOT" != "$PROJECT" ]; then
+                shopt -s dotglob
+                mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
+                shopt -u dotglob
+              fi
+            else
+              echo "ERROR: Tidak ditemukan pubspec.yaml maupun settings.gradle"
+              echo "Isi project:"
+              find "$PROJECT" -type f | head -40
+              exit 1
             fi
           fi
 
+      # ── Flutter setup ──────────────────────────────────────────────────────
+      - name: Setup Flutter
+        if: env.PROJECT_TYPE == 'flutter'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.8'
+          channel: 'stable'
+
       - name: Get Flutter dependencies
-        if: startsWith(github.event.inputs.build_type, 'flutter')
+        if: env.PROJECT_TYPE == 'flutter'
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
           sed -i 's/flutter_lints:.*$/flutter_lints: ^4.0.0/' pubspec.yaml
           flutter pub get || flutter pub upgrade --major-versions
 
       - name: Fix pub-cache build.gradle
-        if: startsWith(github.event.inputs.build_type, 'flutter')
+        if: env.PROJECT_TYPE == 'flutter'
         run: |
           find ~/.pub-cache -name "build.gradle" \
             | xargs grep -l "flutter\.\(compileSdkVersion\|targetSdkVersion\|minSdkVersion\)" 2>/dev/null \
@@ -101,101 +122,89 @@ jobs:
             done
 
       - name: Fix project minSdk (Flutter)
-        if: startsWith(github.event.inputs.build_type, 'flutter')
+        if: env.PROJECT_TYPE == 'flutter'
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
-          GRADLE="android/app/build.gradle"
-          if [ -f "$GRADLE" ]; then
-            sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/' "$GRADLE"
-            sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 24/' "$GRADLE"
-          fi
-
-          GRADLE_KTS="android/app/build.gradle.kts"
-          if [ -f "$GRADLE_KTS" ]; then
-            sed -i 's/minSdk\s*=\s*flutter\.minSdkVersion/minSdk = 24/' "$GRADLE_KTS"
-            sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/' "$GRADLE_KTS"
-            sed -i 's/versionCode = flutter\.versionCode.*/versionCode = 1/' "$GRADLE_KTS"
-            sed -i 's/versionName = flutter\.versionName.*/versionName = "1.0"/' "$GRADLE_KTS"
-          fi
-
-      # ── Native: normalize gradle root ─────────────────────────────────────
-      - name: Normalize Native root
-        if: startsWith(github.event.inputs.build_type, 'native')
-        run: |
-          # Cari settings.gradle / settings.gradle.kts sebagai root marker
-          if [ ! -f "${BUILD_DIR}/project/settings.gradle" ] && \
-             [ ! -f "${BUILD_DIR}/project/settings.gradle.kts" ]; then
-            DIR=$(find "${BUILD_DIR}/project" \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-              | head -1 | xargs dirname)
-            if [ -n "$DIR" ]; then
-              shopt -s dotglob
-              mv "$DIR"/* "${BUILD_DIR}/project/" 2>/dev/null || true
-              shopt -u dotglob
-            fi
-          fi
-
-      - name: Patch Native build.gradle
-        if: startsWith(github.event.inputs.build_type, 'native')
-        working-directory: ${{ env.BUILD_DIR }}/project
-        run: |
-          # compileSdk & targetSdk → 34, minSdk → 24
-          for GRADLE in $(find . -name "build.gradle" -o -name "build.gradle.kts"); do
-            sed -i 's/compileSdkVersion\s*[0-9]*/compileSdkVersion 34/g' "$GRADLE"
-            sed -i 's/compileSdk\s*=\s*[0-9]*/compileSdk = 34/g' "$GRADLE"
-            sed -i 's/targetSdkVersion\s*[0-9]*/targetSdkVersion 34/g' "$GRADLE"
-            sed -i 's/targetSdk\s*=\s*[0-9]*/targetSdk = 34/g' "$GRADLE"
+          for GRADLE in android/app/build.gradle android/app/build.gradle.kts; do
+            [ -f "$GRADLE" ] || continue
             sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/g' "$GRADLE"
+            sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 24/g' "$GRADLE"
+            sed -i 's/minSdk\s*=\s*flutter\.minSdkVersion/minSdk = 24/g' "$GRADLE"
             sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/g' "$GRADLE"
+            sed -i 's/versionCode = flutter\.versionCode.*/versionCode = 1/g' "$GRADLE"
+            sed -i 's/versionName = flutter\.versionName.*/versionName = "1.0"/g' "$GRADLE"
             echo "Patched: $GRADLE"
           done
 
-      # ── Build ──────────────────────────────────────────────────────────────
-      - name: Build Flutter APK
-        if: startsWith(github.event.inputs.build_type, 'flutter')
+      # ── Native setup ───────────────────────────────────────────────────────
+      - name: Setup Android SDK
+        if: env.PROJECT_TYPE == 'native'
+        uses: android-actions/setup-android@v3
+
+      - name: Setup NDK
+        if: env.PROJECT_TYPE == 'native'
+        run: |
+          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
+
+      - name: Patch Native build.gradle
+        if: env.PROJECT_TYPE == 'native'
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
-          MODE="${{ github.event.inputs.build_type }}"
-          if [ "$MODE" = "flutter-debug" ]; then
+          find . \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+            | while read GRADLE; do
+              sed -i 's/compileSdkVersion\s*[0-9]*/compileSdkVersion 34/g' "$GRADLE"
+              sed -i 's/compileSdk\s*=\s*[0-9]*/compileSdk = 34/g' "$GRADLE"
+              sed -i 's/targetSdkVersion\s*[0-9]*/targetSdkVersion 34/g' "$GRADLE"
+              sed -i 's/targetSdk\s*=\s*[0-9]*/targetSdk = 34/g' "$GRADLE"
+              sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/g' "$GRADLE"
+              sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/g' "$GRADLE"
+              echo "Patched: $GRADLE"
+            done
+
+      # ── Build ──────────────────────────────────────────────────────────────
+      - name: Build Flutter APK
+        if: env.PROJECT_TYPE == 'flutter'
+        working-directory: ${{ env.BUILD_DIR }}/project
+        run: |
+          if [ "${{ github.event.inputs.build_mode }}" = "debug" ]; then
             flutter build apk --debug
           else
             flutter build apk --release
           fi
 
       - name: Build Native APK
-        if: startsWith(github.event.inputs.build_type, 'native')
+        if: env.PROJECT_TYPE == 'native'
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
           chmod +x gradlew
-          MODE="${{ github.event.inputs.build_type }}"
-          if [ "$MODE" = "native-debug" ]; then
+          if [ "${{ github.event.inputs.build_mode }}" = "debug" ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace
           else
             ./gradlew assembleRelease --no-daemon --stacktrace
           fi
 
-      # ── Collect & rename APK ──────────────────────────────────────────────
+      # ── Collect & upload ───────────────────────────────────────────────────
       - name: Collect APKs
         run: |
           TAG="${{ github.event.inputs.tag }}"
           OUT="${BUILD_DIR}/output"
           mkdir -p "$OUT"
+          FOUND=0
 
-          # Flutter output path
-          find "${BUILD_DIR}/project/build/app/outputs" -name "*.apk" 2>/dev/null \
-            | while read APK; do
-                BASENAME=$(basename "$APK" .apk)
-                cp "$APK" "$OUT/${BASENAME}-${TAG}.apk"
-                echo "Collected Flutter: ${BASENAME}-${TAG}.apk"
-              done
+          while IFS= read -r APK; do
+            [ -f "$APK" ] || continue
+            BASENAME=$(basename "$APK" .apk)
+            cp "$APK" "$OUT/${BASENAME}-${TAG}.apk"
+            echo "Collected: ${BASENAME}-${TAG}.apk"
+            FOUND=1
+          done < <(find "${BUILD_DIR}/project" -name "*.apk" 2>/dev/null)
 
-          # Native output path (assembleRelease → app/build/outputs/apk/)
-          find "${BUILD_DIR}/project" -path "*/build/outputs/apk/*.apk" 2>/dev/null \
-            | while read APK; do
-                BASENAME=$(basename "$APK" .apk)
-                cp "$APK" "$OUT/${BASENAME}-${TAG}.apk"
-                echo "Collected Native: ${BASENAME}-${TAG}.apk"
-              done
+          if [ "$FOUND" -eq 0 ]; then
+            echo "ERROR: Tidak ada APK ditemukan. Isi build dir:"
+            find "${BUILD_DIR}/project" -type f | head -50
+            exit 1
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
