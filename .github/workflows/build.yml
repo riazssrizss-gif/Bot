@@ -196,6 +196,17 @@ jobs:
               echo "Patched: $GRADLE"
             done
 
+      - name: Fix Gradle Wrapper (Native)
+        if: env.PROJECT_TYPE == 'native'
+        working-directory: ${{ env.BUILD_DIR }}/project
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradlew -o gradlew
+          chmod +x gradlew
+          mkdir -p gradle/wrapper
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar \
+            -o gradle/wrapper/gradle-wrapper.jar
+          echo "✅ Gradle wrapper fixed"
+
       # ── Node.js setup & build ──────────────────────────────────────────────
       - name: Setup Node.js
         if: env.PROJECT_TYPE == 'node'
