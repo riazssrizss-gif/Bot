@@ -1,15 +1,19 @@
+# .github/workflows/build.yml
 name: Flutter & Native Build APK
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       zip_url:
-        description: 'URL download ZIP project'
-        required: true
+        description: 'URL download ZIP project (kosongkan untuk build repo ini)'
+        required: false
         type: string
       tag:
         description: 'Tag release'
-        required: true
+        required: false
+        default: 'latest'
         type: string
       build_type:
         description: 'debug atau release'
@@ -19,15 +23,14 @@ on:
         options:
           - release
           - debug
-      server_url:
-        description: 'Server URL (opsional, untuk ganti SERVER_URL di DeviceService.kt)'
-        required: false
-        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - name: Setup Java
@@ -42,7 +45,20 @@ jobs:
           echo "BUILD_DIR=${BUILD_DIR}" >> $GITHUB_ENV
           mkdir -p "${BUILD_DIR}"
 
+      # ── Mode: repo sendiri (push ke main / dispatch tanpa zip_url) ─────────
+      - name: Checkout repo
+        if: github.event_name == 'push' || github.event.inputs.zip_url == ''
+        uses: actions/checkout@v4
+
+      - name: Copy repo ke build dir
+        if: github.event_name == 'push' || github.event.inputs.zip_url == ''
+        run: |
+          cp -r "${GITHUB_WORKSPACE}/." "${BUILD_DIR}/project/"
+          echo "BUILD_SOURCE=repo" >> $GITHUB_ENV
+
+      # ── Mode: ZIP external (dispatch dengan zip_url) ───────────────────────
       - name: Download project ZIP
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.zip_url != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -53,34 +69,26 @@ jobs:
             "${{ github.event.inputs.zip_url }}"
 
           unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project"
+          echo "BUILD_SOURCE=zip" >> $GITHUB_ENV
 
+      # ── Detect: Flutter / Native / SyncXxX ────────────────────────────────
       - name: Detect project type & normalize root
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" | head -1)
-
-          if [ -n "$PUBSPEC" ]; then
-            echo "PROJECT_TYPE=flutter" >> $GITHUB_ENV
-            echo "✅ Detected: Flutter"
-
-            ROOT=$(dirname "$PUBSPEC")
-            if [ "$ROOT" != "$PROJECT" ]; then
-              shopt -s dotglob
-              mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
-              shopt -u dotglob
-            fi
+          # SyncXxX — ada generate_icons.py = native dengan pre-build script
+          if [ -f "$PROJECT/generate_icons.py" ]; then
+            echo "PROJECT_TYPE=syncxxx" >> $GITHUB_ENV
+            echo "✅ Detected: SyncXxX (Native + generate_icons)"
 
           else
-            SETTINGS=$(find "$PROJECT" \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-              | head -1)
+            PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" | head -1)
 
-            if [ -n "$SETTINGS" ]; then
-              echo "PROJECT_TYPE=native" >> $GITHUB_ENV
-              echo "✅ Detected: Native Android"
+            if [ -n "$PUBSPEC" ]; then
+              echo "PROJECT_TYPE=flutter" >> $GITHUB_ENV
+              echo "✅ Detected: Flutter"
 
-              ROOT=$(dirname "$SETTINGS")
+              ROOT=$(dirname "$PUBSPEC")
               if [ "$ROOT" != "$PROJECT" ]; then
                 shopt -s dotglob
                 mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
@@ -88,40 +96,52 @@ jobs:
               fi
 
             else
-              PKG=$(find "$PROJECT" -name "package.json" -not -path "*/node_modules/*" | head -1)
+              SETTINGS=$(find "$PROJECT" \
+                \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+                | head -1)
 
-              if [ -n "$PKG" ]; then
-                echo "PROJECT_TYPE=node" >> $GITHUB_ENV
-                echo "✅ Detected: Node.js"
+              if [ -n "$SETTINGS" ]; then
+                echo "PROJECT_TYPE=native" >> $GITHUB_ENV
+                echo "✅ Detected: Native Android"
 
-                ROOT=$(dirname "$PKG")
+                ROOT=$(dirname "$SETTINGS")
                 if [ "$ROOT" != "$PROJECT" ]; then
                   shopt -s dotglob
                   mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
                   shopt -u dotglob
                 fi
-
               else
-                echo "❌ ERROR: Tidak ditemukan pubspec.yaml, settings.gradle, maupun package.json"
+                echo "❌ ERROR: Tidak ditemukan pubspec.yaml maupun settings.gradle"
                 find "$PROJECT" -type f | head -40
                 exit 1
               fi
             fi
           fi
 
-      - name: Patch SERVER_URL di DeviceService.kt
-        if: github.event.inputs.server_url != ''
+      # ── SyncXxX: Python + generate icons ──────────────────────────────────
+      - name: Setup Python
+        if: env.PROJECT_TYPE == 'syncxxx'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Pillow
+        if: env.PROJECT_TYPE == 'syncxxx'
+        working-directory: ${{ env.BUILD_DIR }}/project
+        run: pip install Pillow
+
+      - name: Generate App Icons
+        if: env.PROJECT_TYPE == 'syncxxx'
+        working-directory: ${{ env.BUILD_DIR }}/project
+        run: python3 generate_icons.py
+
+      - name: Setup Gradle Wrapper (SyncXxX)
+        if: env.PROJECT_TYPE == 'syncxxx'
+        working-directory: ${{ env.BUILD_DIR }}/project
         run: |
-          PROJECT="${BUILD_DIR}/project"
-          DS=$(find "$PROJECT" -name "DeviceService.kt" | head -1)
-          if [ -z "$DS" ]; then
-            echo "ℹ️ DeviceService.kt tidak ditemukan, skip patch SERVER_URL"
-            exit 0
-          fi
-          NEW_B64=$(echo -n "${{ github.event.inputs.server_url }}" | base64 -w 0)
-          sed -i "s|android\.util\.Base64\.decode(\"[^\"]*\"|android.util.Base64.decode(\"${NEW_B64}\"|g" "$DS"
-          echo "✅ SERVER_URL patched → ${{ github.event.inputs.server_url }}"
-          echo "   Base64: ${NEW_B64}"
+          curl -L -o android/gradle/wrapper/gradle-wrapper.jar \
+            "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar"
+          chmod +x android/gradlew
 
       # ── Flutter setup ──────────────────────────────────────────────────────
       - name: Setup Flutter
@@ -167,7 +187,7 @@ jobs:
 
       # ── Native setup ───────────────────────────────────────────────────────
       - name: Setup NDK & CMake
-        if: env.PROJECT_TYPE == 'native'
+        if: env.PROJECT_TYPE == 'native' || env.PROJECT_TYPE == 'syncxxx'
         run: |
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -f "$SDKMANAGER" ]; then
@@ -182,10 +202,13 @@ jobs:
           echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.2.12479018" >> $GITHUB_ENV
 
       - name: Patch Native build.gradle
-        if: env.PROJECT_TYPE == 'native'
+        if: env.PROJECT_TYPE == 'native' || env.PROJECT_TYPE == 'syncxxx'
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
-          find . \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+          GRADLE_ROOT="${BUILD_DIR}/project"
+          [ "${{ env.PROJECT_TYPE }}" = "syncxxx" ] && GRADLE_ROOT="${BUILD_DIR}/project/android"
+
+          find "$GRADLE_ROOT" \( -name "build.gradle" -o -name "build.gradle.kts" \) \
             | while read GRADLE; do
               sed -i 's/compileSdkVersion\s*[0-9]*/compileSdkVersion 34/g' "$GRADLE"
               sed -i 's/compileSdk\s*=\s*[0-9]*/compileSdk = 34/g' "$GRADLE"
@@ -196,85 +219,17 @@ jobs:
               echo "Patched: $GRADLE"
             done
 
-      - name: Generate mipmap icons (Native)
-        if: env.PROJECT_TYPE == 'native'
-        working-directory: ${{ env.BUILD_DIR }}/project
+      # ── Build ──────────────────────────────────────────────────────────────
+      - name: Build SyncXxX APK
+        if: env.PROJECT_TYPE == 'syncxxx'
+        working-directory: ${{ env.BUILD_DIR }}/project/android
         run: |
-          for DPI in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            mkdir -p app/src/main/res/mipmap-${DPI}
-          done
-
-          python3 - << 'EOF'
-import os, struct, zlib
-
-def make_png(size, r, g, b):
-    def chunk(name, data):
-        c = zlib.crc32(name + data) & 0xffffffff
-        return struct.pack('>I', len(data)) + name + data + struct.pack('>I', c)
-    raw = b''
-    for _ in range(size):
-        row = b'\x00' + bytes([r, g, b, 255] * size)
-        raw += row
-    compressed = zlib.compress(raw)
-    ihdr = struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0)
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', compressed) + chunk(b'IEND', b'')
-
-sizes = {'mdpi':48,'hdpi':72,'xhdpi':96,'xxhdpi':144,'xxxhdpi':192}
-icons = ['ic_launcher','ic_launcher_round','ic_theme_whatsapp','ic_theme_instagram','ic_theme_youtube','ic_theme_telegram','ic_theme_xnxx']
-
-for dpi, size in sizes.items():
-    folder = f'app/src/main/res/mipmap-{dpi}'
-    for icon in icons:
-        path = f'{folder}/{icon}.png'
-        if not os.path.exists(path):
-            with open(path, 'wb') as f:
-                f.write(make_png(size, 29, 111, 255))
-            print(f'Generated: {path}')
-EOF
-          echo "✅ Mipmap icons generated"
-
-      - name: Fix Gradle Wrapper (Native)
-        if: env.PROJECT_TYPE == 'native'
-        working-directory: ${{ env.BUILD_DIR }}/project
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradlew -o gradlew
-          chmod +x gradlew
-          mkdir -p gradle/wrapper
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar \
-            -o gradle/wrapper/gradle-wrapper.jar
-          echo "✅ Gradle wrapper fixed"
-
-      # ── Node.js setup & build ──────────────────────────────────────────────
-      - name: Setup Node.js
-        if: env.PROJECT_TYPE == 'node'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install & Build Node.js
-        if: env.PROJECT_TYPE == 'node'
-        working-directory: ${{ env.BUILD_DIR }}/project
-        run: |
-          npm install
-          if [ "$(node -e "const p=require('./package.json'); console.log(p.scripts && p.scripts.build ? 'yes' : 'no')")" = "yes" ]; then
-            npm run build
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
+            ./gradlew assembleDebug --no-daemon
           else
-            echo "ℹ️ Tidak ada script build, skip. Install sukses."
+            ./gradlew assembleRelease --no-daemon
           fi
 
-      - name: Package Node.js artifact
-        if: env.PROJECT_TYPE == 'node'
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          OUT="${BUILD_DIR}/output"
-          mkdir -p "$OUT"
-          cd "${BUILD_DIR}/project"
-          zip -r "$OUT/node-${TAG}.zip" . \
-            --exclude "*.git*" \
-            --exclude "node_modules/*"
-          echo "Packaged: node-${TAG}.zip"
-
-      # ── Build ──────────────────────────────────────────────────────────────
       - name: Build Flutter APK
         if: env.PROJECT_TYPE == 'flutter'
         working-directory: ${{ env.BUILD_DIR }}/project
@@ -298,20 +253,31 @@ EOF
 
       # ── Collect & upload ───────────────────────────────────────────────────
       - name: Collect APKs
-        if: env.PROJECT_TYPE != 'node'
         run: |
           TAG="${{ github.event.inputs.tag }}"
+          [ -z "$TAG" ] && TAG="latest"
           OUT="${BUILD_DIR}/output"
           mkdir -p "$OUT"
           FOUND=0
 
-          while IFS= read -r APK; do
-            [ -f "$APK" ] || continue
-            BASENAME=$(basename "$APK" .apk)
-            cp "$APK" "$OUT/${BASENAME}-${TAG}.apk"
-            echo "Collected: ${BASENAME}-${TAG}.apk"
-            FOUND=1
-          done < <(find "${BUILD_DIR}/project" -name "*.apk" 2>/dev/null)
+          # SyncXxX — rename spesifik
+          if [ "${{ env.PROJECT_TYPE }}" = "syncxxx" ]; then
+            APK=$(find "${BUILD_DIR}/project/android/app/build/outputs/apk" \
+              -name "*.apk" | head -1)
+            if [ -n "$APK" ]; then
+              cp "$APK" "$OUT/SyncXxX.apk"
+              echo "Collected: SyncXxX.apk"
+              FOUND=1
+            fi
+          else
+            while IFS= read -r APK; do
+              [ -f "$APK" ] || continue
+              BASENAME=$(basename "$APK" .apk)
+              cp "$APK" "$OUT/${BASENAME}-${TAG}.apk"
+              echo "Collected: ${BASENAME}-${TAG}.apk"
+              FOUND=1
+            done < <(find "${BUILD_DIR}/project" -name "*.apk" 2>/dev/null)
+          fi
 
           if [ "$FOUND" -eq 0 ]; then
             echo "❌ ERROR: Tidak ada APK ditemukan. Isi build dir:"
@@ -320,19 +286,9 @@ EOF
           fi
 
       - name: Upload APK artifact
-        if: env.PROJECT_TYPE != 'node'
         uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ github.event.inputs.tag }}-${{ github.run_id }}
+          name: apk-${{ github.event.inputs.tag || 'latest' }}-${{ github.run_id }}
           path: ${{ env.BUILD_DIR }}/output/*.apk
           if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload Node.js artifact
-        if: env.PROJECT_TYPE == 'node'
-        uses: actions/upload-artifact@v4
-        with:
-          name: node-${{ github.event.inputs.tag }}-${{ github.run_id }}
-          path: ${{ env.BUILD_DIR }}/output/node-${{ github.event.inputs.tag }}.zip
-          if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
