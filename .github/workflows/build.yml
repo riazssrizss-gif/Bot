@@ -108,7 +108,7 @@ jobs:
                 fi
               else
                 echo "PROJECT_TYPE=native" >> $GITHUB_ENV
-                echo "⚠️ Fallback: anggap Native, cari gradlew saat build"
+                echo "⚠️ Fallback Native — settings.gradle akan dibuat saat build"
               fi
             fi
           fi
@@ -234,7 +234,7 @@ jobs:
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          # Install Gradle 8.4 manual
+          # Install Gradle 8.4
           GRADLE_VERSION="8.4"
           GRADLE_BIN="/opt/gradle-${GRADLE_VERSION}/bin/gradle"
           if [ ! -f "$GRADLE_BIN" ]; then
@@ -243,21 +243,26 @@ jobs:
             unzip -q /tmp/gradle.zip -d /opt
           fi
 
-          # Generate gradlew kalau nggak ada
-          if [ ! -f "$PROJECT/gradlew" ]; then
+          cd "$PROJECT"
+
+          # Buat settings.gradle kalau belum ada
+          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
+            echo "⚙️ Buat settings.gradle..."
+            APP_NAME=$(basename "$PROJECT")
+            printf 'rootProject.name = "%s"\ninclude(":app")\n' "$APP_NAME" > settings.gradle
+            echo "✅ settings.gradle dibuat: $(cat settings.gradle)"
+          fi
+
+          # Generate gradlew kalau belum ada
+          if [ ! -f "gradlew" ]; then
             echo "⚙️ Generate gradlew..."
-            cd "$PROJECT"
-            "$GRADLE_BIN" wrapper --gradle-version "$GRADLE_VERSION" --distribution-type bin
+            "$GRADLE_BIN" wrapper \
+              --gradle-version "$GRADLE_VERSION" \
+              --distribution-type bin
             chmod +x gradlew
           fi
 
-          # Cari gradlew (mungkin di subfolder)
-          GRADLEW=$(find "$PROJECT" -name "gradlew" | head -1)
-          GRADLE_DIR=$(dirname "$GRADLEW")
-          chmod +x "$GRADLEW"
-          cd "$GRADLE_DIR"
-
-          echo "✅ Build dari: $GRADLE_DIR"
+          echo "✅ Build dari: $PROJECT"
 
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace
@@ -279,6 +284,7 @@ jobs:
               -name "*.apk" | head -1)
             if [ -n "$APK" ]; then
               cp "$APK" "$OUT/SyncXxX.apk"
+              echo "Collected: SyncXxX.apk"
               FOUND=1
             fi
           else
