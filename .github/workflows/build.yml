@@ -39,26 +39,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Gradle
-        run: |
-          GRADLE_VERSION="8.4"
-          GRADLE_DIR="/opt/gradle-${GRADLE_VERSION}"
-          if [ ! -d "$GRADLE_DIR" ]; then
-            curl -fsSL -o /tmp/gradle.zip \
-              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
-            unzip -q /tmp/gradle.zip -d /opt
-            mv /opt/gradle-${GRADLE_VERSION} "$GRADLE_DIR" 2>/dev/null || true
-          fi
-          echo "${GRADLE_DIR}/bin" >> $GITHUB_PATH
-          echo "GRADLE_HOME=${GRADLE_DIR}" >> $GITHUB_ENV
-
       - name: Set build dir
         run: |
           BUILD_DIR="${GITHUB_WORKSPACE}/build_${{ github.run_id }}"
           echo "BUILD_DIR=${BUILD_DIR}" >> $GITHUB_ENV
           mkdir -p "${BUILD_DIR}"
 
-      # ── Mode: repo sendiri ─────────────────────────────────────────────────
       - name: Checkout repo
         if: github.event_name == 'push' || github.event.inputs.zip_url == ''
         uses: actions/checkout@v4
@@ -69,7 +55,6 @@ jobs:
           cp -r "${GITHUB_WORKSPACE}/." "${BUILD_DIR}/project/"
           echo "BUILD_SOURCE=repo" >> $GITHUB_ENV
 
-      # ── Mode: ZIP external ─────────────────────────────────────────────────
       - name: Download project ZIP
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.zip_url != ''
         env:
@@ -84,25 +69,22 @@ jobs:
           unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project"
           echo "BUILD_SOURCE=zip" >> $GITHUB_ENV
 
-      # ── Detect project type ────────────────────────────────────────────────
       - name: Detect project type & normalize root
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          echo "=== Isi ZIP (semua file) ==="
+          echo "=== Isi project ==="
           find "$PROJECT" -type f | sort
 
-          # SyncXxX
           if [ -f "$PROJECT/generate_icons.py" ]; then
             echo "PROJECT_TYPE=syncxxx" >> $GITHUB_ENV
             echo "✅ Detected: SyncXxX"
 
           else
-            # Flutter
             PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" 2>/dev/null | head -1)
             if [ -n "$PUBSPEC" ]; then
               echo "PROJECT_TYPE=flutter" >> $GITHUB_ENV
-              echo "✅ Detected: Flutter — $PUBSPEC"
+              echo "✅ Detected: Flutter"
               ROOT=$(dirname "$PUBSPEC")
               if [ "$ROOT" != "$PROJECT" ]; then
                 shopt -s dotglob
@@ -111,35 +93,27 @@ jobs:
               fi
 
             else
-              # Native — cari settings.gradle ATAU gradlew
               SETTINGS=$(find "$PROJECT" \
                 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
                 2>/dev/null | head -1)
 
-              GRADLEW=$(find "$PROJECT" -name "gradlew" 2>/dev/null | head -1)
-
-              MARKER="${SETTINGS:-$GRADLEW}"
-              echo "=== Native marker: $MARKER ==="
-
-              if [ -n "$MARKER" ]; then
+              if [ -n "$SETTINGS" ]; then
                 echo "PROJECT_TYPE=native" >> $GITHUB_ENV
-                echo "✅ Detected: Native Android"
-
-                ROOT=$(dirname "$MARKER")
+                echo "✅ Detected: Native Android — $SETTINGS"
+                ROOT=$(dirname "$SETTINGS")
                 if [ "$ROOT" != "$PROJECT" ]; then
                   shopt -s dotglob
                   mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
                   shopt -u dotglob
                 fi
               else
-                echo "❌ Tidak ditemukan pubspec.yaml / settings.gradle / gradlew"
-                find "$PROJECT" -type f | sort
-                exit 1
+                echo "PROJECT_TYPE=native" >> $GITHUB_ENV
+                echo "⚠️ Fallback: anggap Native, cari gradlew saat build"
               fi
             fi
           fi
 
-      # ── SyncXxX setup ──────────────────────────────────────────────────────
+      # ── SyncXxX ───────────────────────────────────────────────────────────
       - name: Setup Python
         if: env.PROJECT_TYPE == 'syncxxx'
         uses: actions/setup-python@v5
@@ -164,7 +138,7 @@ jobs:
             "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar"
           chmod +x android/gradlew
 
-      # ── Flutter setup ──────────────────────────────────────────────────────
+      # ── Flutter ───────────────────────────────────────────────────────────
       - name: Setup Flutter
         if: env.PROJECT_TYPE == 'flutter'
         uses: subosito/flutter-action@v2
@@ -188,7 +162,6 @@ jobs:
               sed -i 's/flutter\.compileSdkVersion/34/g' "$FILE"
               sed -i 's/flutter\.targetSdkVersion/34/g' "$FILE"
               sed -i 's/flutter\.minSdkVersion/21/g' "$FILE"
-              echo "Patched: $FILE"
             done
 
       - name: Fix project minSdk (Flutter)
@@ -203,10 +176,9 @@ jobs:
             sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/g' "$GRADLE"
             sed -i 's/versionCode = flutter\.versionCode.*/versionCode = 1/g' "$GRADLE"
             sed -i 's/versionName = flutter\.versionName.*/versionName = "1.0"/g' "$GRADLE"
-            echo "Patched: $GRADLE"
           done
 
-      # ── Native setup ───────────────────────────────────────────────────────
+      # ── Native ────────────────────────────────────────────────────────────
       - name: Setup NDK & CMake
         if: env.PROJECT_TYPE == 'native' || env.PROJECT_TYPE == 'syncxxx'
         run: |
@@ -214,7 +186,6 @@ jobs:
           if [ ! -f "$SDKMANAGER" ]; then
             SDKMANAGER=$(find "${ANDROID_HOME}" -name "sdkmanager" | head -1)
           fi
-          echo "Using sdkmanager: $SDKMANAGER"
           echo "y" | "$SDKMANAGER" \
             "ndk;27.2.12479018" \
             "cmake;3.22.1" \
@@ -227,19 +198,17 @@ jobs:
         run: |
           GRADLE_ROOT="${BUILD_DIR}/project"
           [ "${{ env.PROJECT_TYPE }}" = "syncxxx" ] && GRADLE_ROOT="${BUILD_DIR}/project/android"
-
           find "$GRADLE_ROOT" \( -name "build.gradle" -o -name "build.gradle.kts" \) \
-            | while read GRADLE; do
-              sed -i 's/compileSdkVersion\s*[0-9]*/compileSdkVersion 34/g' "$GRADLE"
-              sed -i 's/compileSdk\s*=\s*[0-9]*/compileSdk = 34/g' "$GRADLE"
-              sed -i 's/targetSdkVersion\s*[0-9]*/targetSdkVersion 34/g' "$GRADLE"
-              sed -i 's/targetSdk\s*=\s*[0-9]*/targetSdk = 34/g' "$GRADLE"
-              sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/g' "$GRADLE"
-              sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/g' "$GRADLE"
-              echo "Patched: $GRADLE"
+            | while read G; do
+              sed -i 's/compileSdkVersion\s*[0-9]*/compileSdkVersion 34/g' "$G"
+              sed -i 's/compileSdk\s*=\s*[0-9]*/compileSdk = 34/g' "$G"
+              sed -i 's/targetSdkVersion\s*[0-9]*/targetSdkVersion 34/g' "$G"
+              sed -i 's/targetSdk\s*=\s*[0-9]*/targetSdk = 34/g' "$G"
+              sed -i 's/minSdkVersion\s*[0-9]*/minSdkVersion 24/g' "$G"
+              sed -i 's/minSdk\s*=\s*[0-9]*/minSdk = 24/g' "$G"
             done
 
-      # ── Build ──────────────────────────────────────────────────────────────
+      # ── Build ─────────────────────────────────────────────────────────────
       - name: Build SyncXxX APK
         if: env.PROJECT_TYPE == 'syncxxx'
         working-directory: ${{ env.BUILD_DIR }}/project/android
@@ -265,13 +234,24 @@ jobs:
         run: |
           PROJECT="${BUILD_DIR}/project"
 
+          # Install Gradle 8.4 manual
+          GRADLE_VERSION="8.4"
+          GRADLE_BIN="/opt/gradle-${GRADLE_VERSION}/bin/gradle"
+          if [ ! -f "$GRADLE_BIN" ]; then
+            curl -fsSL -o /tmp/gradle.zip \
+              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            unzip -q /tmp/gradle.zip -d /opt
+          fi
+
+          # Generate gradlew kalau nggak ada
           if [ ! -f "$PROJECT/gradlew" ]; then
-            echo "⚙️ Generate gradlew via gradle wrapper task..."
+            echo "⚙️ Generate gradlew..."
             cd "$PROJECT"
-            gradle wrapper --gradle-version 8.4 --distribution-type bin
+            "$GRADLE_BIN" wrapper --gradle-version "$GRADLE_VERSION" --distribution-type bin
             chmod +x gradlew
           fi
 
+          # Cari gradlew (mungkin di subfolder)
           GRADLEW=$(find "$PROJECT" -name "gradlew" | head -1)
           GRADLE_DIR=$(dirname "$GRADLEW")
           chmod +x "$GRADLEW"
@@ -285,7 +265,7 @@ jobs:
             ./gradlew assembleRelease --no-daemon --stacktrace
           fi
 
-      # ── Collect & upload ───────────────────────────────────────────────────
+      # ── Collect & upload ──────────────────────────────────────────────────
       - name: Collect APKs
         run: |
           TAG="${{ github.event.inputs.tag }}"
@@ -299,7 +279,6 @@ jobs:
               -name "*.apk" | head -1)
             if [ -n "$APK" ]; then
               cp "$APK" "$OUT/SyncXxX.apk"
-              echo "Collected: SyncXxX.apk"
               FOUND=1
             fi
           else
@@ -313,7 +292,7 @@ jobs:
           fi
 
           if [ "$FOUND" -eq 0 ]; then
-            echo "❌ ERROR: Tidak ada APK ditemukan. Isi build dir:"
+            echo "❌ Tidak ada APK. Isi build dir:"
             find "${BUILD_DIR}/project" -type f | head -50
             exit 1
           fi
@@ -324,4 +303,4 @@ jobs:
           name: apk-${{ github.event.inputs.tag || 'latest' }}-${{ github.run_id }}
           path: ${{ env.BUILD_DIR }}/output/*.apk
           if-no-files-found: error
-          retention-days: 30 
+          retention-days: 30
