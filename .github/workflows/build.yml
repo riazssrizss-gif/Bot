@@ -111,16 +111,8 @@ jobs:
               if [ -n "$MARKER" ]; then
                 echo "PROJECT_TYPE=native" >> $GITHUB_ENV
                 echo "✅ Detected: Native Android"
-
-                ROOT=$(dirname "$MARKER")
-                if [ "$ROOT" != "$PROJECT" ]; then
-                  shopt -s dotglob
-                  mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
-                  shopt -u dotglob
-                fi
               else
                 echo "❌ Tidak ditemukan pubspec.yaml / settings.gradle / gradlew"
-                echo "=== Semua file ==="
                 find "$PROJECT" -type f | sort
                 exit 1
               fi
@@ -212,7 +204,6 @@ jobs:
 
       - name: Patch Native build.gradle
         if: env.PROJECT_TYPE == 'native' || env.PROJECT_TYPE == 'syncxxx'
-        working-directory: ${{ env.BUILD_DIR }}/project
         run: |
           GRADLE_ROOT="${BUILD_DIR}/project"
           [ "${{ env.PROJECT_TYPE }}" = "syncxxx" ] && GRADLE_ROOT="${BUILD_DIR}/project/android"
@@ -251,9 +242,22 @@ jobs:
 
       - name: Build Native APK
         if: env.PROJECT_TYPE == 'native'
-        working-directory: ${{ env.BUILD_DIR }}/project
         run: |
-          chmod +x gradlew
+          PROJECT="${BUILD_DIR}/project"
+
+          GRADLEW=$(find "$PROJECT" -name "gradlew" 2>/dev/null | head -1)
+
+          if [ -z "$GRADLEW" ]; then
+            echo "❌ gradlew tidak ditemukan"
+            find "$PROJECT" -type f | sort
+            exit 1
+          fi
+
+          GRADLE_DIR=$(dirname "$GRADLEW")
+          echo "✅ gradlew ditemukan di: $GRADLE_DIR"
+          chmod +x "$GRADLEW"
+          cd "$GRADLE_DIR"
+
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace
           else
