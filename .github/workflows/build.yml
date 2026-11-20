@@ -245,18 +245,34 @@ jobs:
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          GRADLEW=$(find "$PROJECT" -name "gradlew" 2>/dev/null | head -1)
+          # Generate gradlew kalau nggak ada di ZIP
+          if [ ! -f "$PROJECT/gradlew" ]; then
+            echo "⚙️ gradlew tidak ada, generate wrapper..."
+            cd "$PROJECT"
+            mkdir -p gradle/wrapper
 
-          if [ -z "$GRADLEW" ]; then
-            echo "❌ gradlew tidak ditemukan"
-            find "$PROJECT" -type f | sort
-            exit 1
+            curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
+              "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar"
+
+            cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF
+
+            curl -fsSL -o gradlew \
+              "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradlew"
+            chmod +x gradlew
           fi
 
+          GRADLEW=$(find "$PROJECT" -name "gradlew" | head -1)
           GRADLE_DIR=$(dirname "$GRADLEW")
-          echo "✅ gradlew ditemukan di: $GRADLE_DIR"
           chmod +x "$GRADLEW"
           cd "$GRADLE_DIR"
+
+          echo "✅ Build dari: $GRADLE_DIR"
 
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace
