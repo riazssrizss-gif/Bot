@@ -76,8 +76,8 @@ jobs:
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          echo "=== Isi root ZIP ==="
-          find "$PROJECT" -maxdepth 3 -type f | head -60
+          echo "=== Isi ZIP (semua file) ==="
+          find "$PROJECT" -type f | sort
 
           # SyncXxX
           if [ -f "$PROJECT/generate_icons.py" ]; then
@@ -85,12 +85,11 @@ jobs:
             echo "✅ Detected: SyncXxX"
 
           else
-            PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" | head -1)
-
+            # Flutter
+            PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" 2>/dev/null | head -1)
             if [ -n "$PUBSPEC" ]; then
               echo "PROJECT_TYPE=flutter" >> $GITHUB_ENV
               echo "✅ Detected: Flutter — $PUBSPEC"
-
               ROOT=$(dirname "$PUBSPEC")
               if [ "$ROOT" != "$PROJECT" ]; then
                 shopt -s dotglob
@@ -99,28 +98,30 @@ jobs:
               fi
 
             else
+              # Native — cari settings.gradle ATAU gradlew
               SETTINGS=$(find "$PROJECT" \
                 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
                 2>/dev/null | head -1)
 
-              echo "=== settings.gradle ditemukan di: $SETTINGS ==="
+              GRADLEW=$(find "$PROJECT" -name "gradlew" 2>/dev/null | head -1)
 
-              if [ -n "$SETTINGS" ]; then
+              MARKER="${SETTINGS:-$GRADLEW}"
+              echo "=== Native marker: $MARKER ==="
+
+              if [ -n "$MARKER" ]; then
                 echo "PROJECT_TYPE=native" >> $GITHUB_ENV
                 echo "✅ Detected: Native Android"
 
-                ROOT=$(dirname "$SETTINGS")
-                echo "=== Native root: $ROOT ==="
-
+                ROOT=$(dirname "$MARKER")
                 if [ "$ROOT" != "$PROJECT" ]; then
                   shopt -s dotglob
                   mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
                   shopt -u dotglob
                 fi
               else
-                echo "❌ ERROR: Tidak ditemukan pubspec.yaml maupun settings.gradle"
-                echo "=== Semua file dalam ZIP ==="
-                find "$PROJECT" -type f
+                echo "❌ Tidak ditemukan pubspec.yaml / settings.gradle / gradlew"
+                echo "=== Semua file ==="
+                find "$PROJECT" -type f | sort
                 exit 1
               fi
             fi
