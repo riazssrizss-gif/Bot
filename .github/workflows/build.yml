@@ -245,7 +245,6 @@ jobs:
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          # Generate gradlew kalau nggak ada di ZIP
           if [ ! -f "$PROJECT/gradlew" ]; then
             echo "⚙️ gradlew tidak ada, generate wrapper..."
             cd "$PROJECT"
@@ -254,13 +253,8 @@ jobs:
             curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
               "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar"
 
-            cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
-distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists
-EOF
+            printf 'distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-8.4-bin.zip\nzipStoreBase=GRADLE_USER_HOME\nzipStorePath=wrapper/dists\n' \
+              > gradle/wrapper/gradle-wrapper.properties
 
             curl -fsSL -o gradlew \
               "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradlew"
