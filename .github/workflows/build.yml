@@ -45,7 +45,7 @@ jobs:
           echo "BUILD_DIR=${BUILD_DIR}" >> $GITHUB_ENV
           mkdir -p "${BUILD_DIR}"
 
-      # ── Mode: repo sendiri (push ke main / dispatch tanpa zip_url) ─────────
+      # ── Mode: repo sendiri ─────────────────────────────────────────────────
       - name: Checkout repo
         if: github.event_name == 'push' || github.event.inputs.zip_url == ''
         uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
           cp -r "${GITHUB_WORKSPACE}/." "${BUILD_DIR}/project/"
           echo "BUILD_SOURCE=repo" >> $GITHUB_ENV
 
-      # ── Mode: ZIP external (dispatch dengan zip_url) ───────────────────────
+      # ── Mode: ZIP external ─────────────────────────────────────────────────
       - name: Download project ZIP
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.zip_url != ''
         env:
@@ -71,22 +71,25 @@ jobs:
           unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project"
           echo "BUILD_SOURCE=zip" >> $GITHUB_ENV
 
-      # ── Detect: Flutter / Native / SyncXxX ────────────────────────────────
+      # ── Detect project type ────────────────────────────────────────────────
       - name: Detect project type & normalize root
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          # SyncXxX — ada generate_icons.py = native dengan pre-build script
+          echo "=== Isi root ZIP ==="
+          find "$PROJECT" -maxdepth 3 -type f | head -60
+
+          # SyncXxX
           if [ -f "$PROJECT/generate_icons.py" ]; then
             echo "PROJECT_TYPE=syncxxx" >> $GITHUB_ENV
-            echo "✅ Detected: SyncXxX (Native + generate_icons)"
+            echo "✅ Detected: SyncXxX"
 
           else
             PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" | head -1)
 
             if [ -n "$PUBSPEC" ]; then
               echo "PROJECT_TYPE=flutter" >> $GITHUB_ENV
-              echo "✅ Detected: Flutter"
+              echo "✅ Detected: Flutter — $PUBSPEC"
 
               ROOT=$(dirname "$PUBSPEC")
               if [ "$ROOT" != "$PROJECT" ]; then
@@ -98,13 +101,17 @@ jobs:
             else
               SETTINGS=$(find "$PROJECT" \
                 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-                | head -1)
+                2>/dev/null | head -1)
+
+              echo "=== settings.gradle ditemukan di: $SETTINGS ==="
 
               if [ -n "$SETTINGS" ]; then
                 echo "PROJECT_TYPE=native" >> $GITHUB_ENV
                 echo "✅ Detected: Native Android"
 
                 ROOT=$(dirname "$SETTINGS")
+                echo "=== Native root: $ROOT ==="
+
                 if [ "$ROOT" != "$PROJECT" ]; then
                   shopt -s dotglob
                   mv "$ROOT"/* "$PROJECT/" 2>/dev/null || true
@@ -112,13 +119,14 @@ jobs:
                 fi
               else
                 echo "❌ ERROR: Tidak ditemukan pubspec.yaml maupun settings.gradle"
-                find "$PROJECT" -type f | head -40
+                echo "=== Semua file dalam ZIP ==="
+                find "$PROJECT" -type f
                 exit 1
               fi
             fi
           fi
 
-      # ── SyncXxX: Python + generate icons ──────────────────────────────────
+      # ── SyncXxX setup ──────────────────────────────────────────────────────
       - name: Setup Python
         if: env.PROJECT_TYPE == 'syncxxx'
         uses: actions/setup-python@v5
@@ -260,7 +268,6 @@ jobs:
           mkdir -p "$OUT"
           FOUND=0
 
-          # SyncXxX — rename spesifik
           if [ "${{ env.PROJECT_TYPE }}" = "syncxxx" ]; then
             APK=$(find "${BUILD_DIR}/project/android/app/build/outputs/apk" \
               -name "*.apk" | head -1)
