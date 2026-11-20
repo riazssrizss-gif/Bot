@@ -40,9 +40,17 @@ jobs:
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
+        run: |
+          GRADLE_VERSION="8.4"
+          GRADLE_DIR="/opt/gradle-${GRADLE_VERSION}"
+          if [ ! -d "$GRADLE_DIR" ]; then
+            curl -fsSL -o /tmp/gradle.zip \
+              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            unzip -q /tmp/gradle.zip -d /opt
+            mv /opt/gradle-${GRADLE_VERSION} "$GRADLE_DIR" 2>/dev/null || true
+          fi
+          echo "${GRADLE_DIR}/bin" >> $GITHUB_PATH
+          echo "GRADLE_HOME=${GRADLE_DIR}" >> $GITHUB_ENV
 
       - name: Set build dir
         run: |
@@ -117,7 +125,6 @@ jobs:
                 echo "PROJECT_TYPE=native" >> $GITHUB_ENV
                 echo "✅ Detected: Native Android"
 
-                # Normalize root ke folder settings.gradle
                 ROOT=$(dirname "$MARKER")
                 if [ "$ROOT" != "$PROJECT" ]; then
                   shopt -s dotglob
@@ -258,7 +265,6 @@ jobs:
         run: |
           PROJECT="${BUILD_DIR}/project"
 
-          # Generate gradlew kalau nggak ada
           if [ ! -f "$PROJECT/gradlew" ]; then
             echo "⚙️ Generate gradlew via gradle wrapper task..."
             cd "$PROJECT"
@@ -318,4 +324,4 @@ jobs:
           name: apk-${{ github.event.inputs.tag || 'latest' }}-${{ github.run_id }}
           path: ${{ env.BUILD_DIR }}/output/*.apk
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 30 
