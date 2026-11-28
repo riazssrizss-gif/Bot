@@ -262,9 +262,17 @@ jobs:
         working-directory: ${{ env.BUILD_DIR }}/project/android
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            ./gradlew assembleDebug --no-daemon --stacktrace
+            ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tee /tmp/build.log
           else
-            ./gradlew assembleRelease --no-daemon --stacktrace
+            ./gradlew assembleRelease --no-daemon --stacktrace --info 2>&1 | tee /tmp/build.log
+          fi
+          EXIT=${PIPESTATUS[0]}
+          if [ "$EXIT" -ne 0 ]; then
+            echo "===== KOTLIN ERRORS ====="
+            grep -E "error:|warning:.*error|e:.*\.kt" /tmp/build.log | head -60 || true
+            echo "===== TASK FAILURES ====="
+            grep -A 10 "FAILED\|Exception\|Caused by" /tmp/build.log | head -80 || true
+            exit "$EXIT"
           fi
 
       - name: Build Flutter APK
