@@ -262,16 +262,22 @@ jobs:
         working-directory: ${{ env.BUILD_DIR }}/project/android
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tee /tmp/build.log
+            ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log; EXIT=${PIPESTATUS[0]}
           else
-            ./gradlew assembleRelease --no-daemon --stacktrace --info 2>&1 | tee /tmp/build.log
+            ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log; EXIT=${PIPESTATUS[0]}
           fi
-          EXIT=${PIPESTATUS[0]}
           if [ "$EXIT" -ne 0 ]; then
-            echo "===== KOTLIN ERRORS ====="
-            grep -E "error:|warning:.*error|e:.*\.kt" /tmp/build.log | head -60 || true
-            echo "===== TASK FAILURES ====="
-            grep -A 10 "FAILED\|Exception\|Caused by" /tmp/build.log | head -80 || true
+            echo "===== KOTLIN COMPILER ERRORS (from log) ====="
+            grep -E "^e: |error: " /tmp/build.log || true
+
+            echo "===== KOTLIN ERROR FILES ====="
+            find . -path "*/kotlin/compileRelease*" -name "*.txt" 2>/dev/null \
+              | while read f; do echo "--- $f ---"; cat "$f"; done || true
+            find . -path "*/build/outputs/logs*" -name "*.log" 2>/dev/null \
+              | while read f; do echo "--- $f ---"; tail -50 "$f"; done || true
+
+            echo "===== LAST 150 LINES BUILD LOG ====="
+            tail -150 /tmp/build.log || true
             exit "$EXIT"
           fi
 
