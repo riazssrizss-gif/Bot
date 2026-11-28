@@ -261,25 +261,42 @@ jobs:
         if: env.PROJECT_TYPE == 'syncxxx'
         working-directory: ${{ env.BUILD_DIR }}/project/android
         run: |
-          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
-            ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log; EXIT=${PIPESTATUS[0]}
-          else
-            ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/build.log; EXIT=${PIPESTATUS[0]}
-          fi
-          if [ "$EXIT" -ne 0 ]; then
-            echo "===== KOTLIN COMPILER ERRORS (from log) ====="
-            grep -E "^e: |error: " /tmp/build.log || true
+          # Build selalu debug dulu untuk capture error — release di run berikutnya
+          BUILD_TASK="assembleDebug"
+          [ "${{ github.event.inputs.build_type }}" = "release" ] && BUILD_TASK="assembleRelease"
 
-            echo "===== KOTLIN ERROR FILES ====="
-            find . -path "*/kotlin/compileRelease*" -name "*.txt" 2>/dev/null \
-              | while read f; do echo "--- $f ---"; cat "$f"; done || true
-            find . -path "*/build/outputs/logs*" -name "*.log" 2>/dev/null \
-              | while read f; do echo "--- $f ---"; tail -50 "$f"; done || true
+          set +e
+          ./gradlew "$BUILD_TASK" \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all \
+            -Pkotlin.daemon.jvm.options="-Xmx2g" \
+            > /tmp/build-stdout.log 2> /tmp/build-stderr.log
+          EXIT=$?
+          set -e
 
-            echo "===== LAST 150 LINES BUILD LOG ====="
-            tail -150 /tmp/build.log || true
-            exit "$EXIT"
-          fi
+          echo "===== STDOUT (last 200) ====="
+          tail -200 /tmp/build-stdout.log || true
+
+          echo "===== STDERR (all) ====="
+          cat /tmp/build-stderr.log || true
+
+          echo "===== KOTLIN BUILD REPORTS ====="
+          find . -name "*.log" -path "*/kotlin-build*" 2>/dev/null \
+            | while read f; do echo "=== $f ==="; cat "$f"; done || true
+
+          echo "===== KOTLIN COMPILE OUTPUT FILES ====="
+          find . \( \
+            -path "*/build/tmp/kotlin-classes*" \
+            -o -path "*/build/kotlin*" \
+            -o -path "*/reports/kotlin*" \
+          \) -name "*.txt" -o -name "*.log" 2>/dev/null \
+            | while read f; do echo "=== $f ==="; cat "$f"; done || true
+
+          echo "===== ALL BUILD FILES ====="
+          find ./app/build -type f 2>/dev/null | sort | head -50 || true
+
+          exit "$EXIT"
 
       - name: Build Flutter APK
         if: env.PROJECT_TYPE == 'flutter'
