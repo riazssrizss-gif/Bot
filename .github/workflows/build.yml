@@ -1,3 +1,4 @@
+# .github/workflows/build.yml
 name: Flutter & Native Build APK
 
 on:
@@ -65,20 +66,9 @@ jobs:
             -o "${BUILD_DIR}/project.zip" \
             "${{ github.event.inputs.zip_url }}"
 
-          unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project_raw"
-
-          # Flatten satu level subfolder jika ada
-          RAW="${BUILD_DIR}/project_raw"
-          ITEMS=$(ls -A "$RAW" | wc -l)
-          FIRST=$(ls -A "$RAW" | head -1)
-          if [ "$ITEMS" -eq 1 ] && [ -d "$RAW/$FIRST" ]; then
-            mv "$RAW/$FIRST" "${BUILD_DIR}/project"
-          else
-            mv "$RAW" "${BUILD_DIR}/project"
-          fi
+          unzip -q "${BUILD_DIR}/project.zip" -d "${BUILD_DIR}/project"
           echo "BUILD_SOURCE=zip" >> $GITHUB_ENV
 
-      # ── Detect project type ───────────────────────────────────────────────
       - name: Detect project type & normalize root
         run: |
           PROJECT="${BUILD_DIR}/project"
@@ -86,24 +76,10 @@ jobs:
           echo "=== Isi project ==="
           find "$PROJECT" -type f | sort
 
-          # ── SyncXxX: generate_icons.py di root, android/ berisi native project
           if [ -f "$PROJECT/generate_icons.py" ]; then
             echo "PROJECT_TYPE=syncxxx" >> $GITHUB_ENV
             echo "✅ Detected: SyncXxX"
 
-          # ── SyncXxX nested: zip langsung berisi subfolder yg punya generate_icons.py
-          elif find "$PROJECT" -maxdepth 2 -name "generate_icons.py" | grep -q .; then
-            ICONS_PATH=$(find "$PROJECT" -maxdepth 2 -name "generate_icons.py" | head -1)
-            ICONS_DIR=$(dirname "$ICONS_PATH")
-            if [ "$ICONS_DIR" != "$PROJECT" ]; then
-              shopt -s dotglob
-              mv "$ICONS_DIR"/* "$PROJECT/" 2>/dev/null || true
-              shopt -u dotglob
-            fi
-            echo "PROJECT_TYPE=syncxxx" >> $GITHUB_ENV
-            echo "✅ Detected: SyncXxX (nested, normalized)"
-
-          # ── Flutter: ada pubspec.yaml
           else
             PUBSPEC=$(find "$PROJECT" -name "pubspec.yaml" 2>/dev/null | head -1)
             if [ -n "$PUBSPEC" ]; then
@@ -116,7 +92,6 @@ jobs:
                 shopt -u dotglob
               fi
 
-            # ── Native Android: ada settings.gradle
             else
               SETTINGS=$(find "$PROJECT" \
                 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
@@ -159,31 +134,9 @@ jobs:
         if: env.PROJECT_TYPE == 'syncxxx'
         working-directory: ${{ env.BUILD_DIR }}/project
         run: |
-          GRADLE_VERSION="8.4"
-          GRADLE_BIN="/opt/gradle-${GRADLE_VERSION}/bin/gradle"
-
-          # Install gradle binary jika belum ada
-          if [ ! -f "$GRADLE_BIN" ]; then
-            curl -fsSL \
-              -o /tmp/gradle-bin.zip \
-              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
-            unzip -q /tmp/gradle-bin.zip -d /opt
-          fi
-
-          # Generate gradlew + gradle-wrapper.jar yang valid
-          mkdir -p android/gradle/wrapper
-          "$GRADLE_BIN" wrapper \
-            --project-dir android \
-            --gradle-version "$GRADLE_VERSION" \
-            --distribution-type bin
-
+          curl -L -o android/gradle/wrapper/gradle-wrapper.jar \
+            "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar"
           chmod +x android/gradlew
-
-          # Validasi class ada
-          unzip -p android/gradle/wrapper/gradle-wrapper.jar \
-            org/gradle/wrapper/GradleWrapperMain.class > /dev/null
-          echo "✅ GradleWrapperMain verified"
-          ls -lh android/gradle/wrapper/
 
       # ── Flutter ───────────────────────────────────────────────────────────
       - name: Setup Flutter
@@ -217,16 +170,27 @@ jobs:
         run: |
           for GRADLE in android/app/build.gradle android/app/build.gradle.kts; do
             [ -f "$GRADLE" ] || continue
+
+            # Groovy style: minSdkVersion flutter.minSdkVersion → minSdkVersion 24
             sed -i 's/minSdkVersion[[:space:]]*flutter\.minSdkVersion/minSdkVersion 24/g' "$GRADLE"
+            # Groovy style: minSdkVersion 21 → minSdkVersion 24
             sed -i 's/minSdkVersion[[:space:]]*[0-9]\+/minSdkVersion 24/g' "$GRADLE"
+
+            # KTS style: minSdk = flutter.minSdkVersion → minSdk = 24
             sed -i 's/minSdk[[:space:]]*=[[:space:]]*flutter\.minSdkVersion/minSdk = 24/g' "$GRADLE"
+            # KTS style: minSdk = 21 → minSdk = 24  (hanya kalau belum 24)
             sed -i 's/minSdk[[:space:]]*=[[:space:]]*[0-9]\+/minSdk = 24/g' "$GRADLE"
+
+            # versionCode & versionName (KTS only)
             sed -i 's/versionCode[[:space:]]*=[[:space:]]*flutter\.versionCode/versionCode = 1/g' "$GRADLE"
             sed -i 's/versionName[[:space:]]*=[[:space:]]*flutter\.versionName/versionName = "1.0"/g' "$GRADLE"
+
             echo "Patched: $GRADLE"
+            echo "--- minSdk lines after patch ---"
+            grep -n "minSdk" "$GRADLE" || true
           done
 
-      # ── NDK & CMake (Native + SyncXxX) ───────────────────────────────────
+      # ── Native ────────────────────────────────────────────────────────────
       - name: Setup NDK & CMake
         if: env.PROJECT_TYPE == 'native' || env.PROJECT_TYPE == 'syncxxx'
         run: |
@@ -259,34 +223,13 @@ jobs:
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Build SyncXxX APK
         if: env.PROJECT_TYPE == 'syncxxx'
-        id: gradle_build
-        working-directory: ${{ env.BUILD_DIR }}/project/android
-        continue-on-error: true
-        run: |
-          BUILD_TASK="assembleRelease"
-          [ "${{ github.event.inputs.build_type }}" = "debug" ] && BUILD_TASK="assembleDebug"
-          ./gradlew "$BUILD_TASK" --no-daemon --continue 2>&1 | tee /tmp/build.log
-          echo "GRADLE_EXIT=${PIPESTATUS[0]}" >> $GITHUB_ENV
-
-      - name: Dump Kotlin errors
-        if: env.PROJECT_TYPE == 'syncxxx' && steps.gradle_build.outcome == 'failure'
         working-directory: ${{ env.BUILD_DIR }}/project/android
         run: |
-          echo "===== BUILD LOG (last 300 lines) ====="
-          tail -300 /tmp/build.log || true
-
-          echo "===== KOTLIN ERROR REPORTS ====="
-          find . -type f \( -name "*.log" -o -name "*.txt" \) \
-            -path "*/build/*" 2>/dev/null \
-            | while read f; do
-                SIZE=$(wc -c < "$f")
-                [ "$SIZE" -gt 0 ] && echo "=== $f ===" && cat "$f"
-              done || true
-
-          echo "===== BUILD DIR TREE ====="
-          find ./app/build -type f 2>/dev/null | sort
-
-          exit 1
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
+            ./gradlew assembleDebug --no-daemon
+          else
+            ./gradlew assembleRelease --no-daemon
+          fi
 
       - name: Build Flutter APK
         if: env.PROJECT_TYPE == 'flutter'
@@ -302,9 +245,9 @@ jobs:
         if: env.PROJECT_TYPE == 'native'
         run: |
           PROJECT="${BUILD_DIR}/project"
+
           GRADLE_VERSION="8.4"
           GRADLE_BIN="/opt/gradle-${GRADLE_VERSION}/bin/gradle"
-
           if [ ! -f "$GRADLE_BIN" ]; then
             curl -fsSL -o /tmp/gradle.zip \
               "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
@@ -314,24 +257,18 @@ jobs:
           cd "$PROJECT"
 
           if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
+            echo "⚙️ Buat settings.gradle..."
             APP_NAME=$(basename "$PROJECT")
             printf 'rootProject.name = "%s"\ninclude(":app")\n' "$APP_NAME" > settings.gradle
           fi
 
           if [ ! -f "gradlew" ]; then
+            echo "⚙️ Generate gradlew..."
             "$GRADLE_BIN" wrapper \
               --gradle-version "$GRADLE_VERSION" \
               --distribution-type bin
             chmod +x gradlew
           fi
-
-          # Pastikan wrapper jar ada — generate via gradle binary
-          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            "$GRADLE_BIN" wrapper \
-              --gradle-version "$GRADLE_VERSION" \
-              --distribution-type bin
-          fi
-          chmod +x gradlew
 
           if [ "${{ github.event.inputs.build_type }}" = "debug" ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace
@@ -350,7 +287,7 @@ jobs:
 
           if [ "${{ env.PROJECT_TYPE }}" = "syncxxx" ]; then
             APK=$(find "${BUILD_DIR}/project/android/app/build/outputs/apk" \
-              -name "*.apk" 2>/dev/null | head -1)
+              -name "*.apk" | head -1)
             if [ -n "$APK" ]; then
               cp "$APK" "$OUT/SyncXxX.apk"
               echo "Collected: SyncXxX.apk"
