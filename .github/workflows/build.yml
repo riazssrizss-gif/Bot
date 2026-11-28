@@ -161,27 +161,31 @@ jobs:
         run: |
           mkdir -p android/gradle/wrapper
 
-          # Download gradle-wrapper.jar dari Maven Central (reliable)
-          JAR_URL="https://repo1.maven.org/maven2/org/gradle/gradle-wrapper/8.4/gradle-wrapper-8.4.jar"
-          curl -fsSL -o android/gradle/wrapper/gradle-wrapper.jar "$JAR_URL"
+          GRADLE_VERSION="8.4"
+          DIST_ZIP="/tmp/gradle-${GRADLE_VERSION}-bin.zip"
 
-          # Validasi jar tidak corrupt
-          if ! unzip -tq android/gradle/wrapper/gradle-wrapper.jar 2>/dev/null; then
-            echo "❌ gradle-wrapper.jar corrupt, coba fallback GitHub releases"
-            curl -fsSL -o android/gradle/wrapper/gradle-wrapper.jar \
-              "https://github.com/gradle/gradle/releases/download/v8.4.0/gradle-8.4-wrapper.jar" \
-              || true
-          fi
+          # Download distribution zip (URL ini guaranteed ada)
+          curl -fsSL \
+            -o "$DIST_ZIP" \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
 
-          # Pastikan gradlew ada dan executable
-          if [ ! -f android/gradlew ]; then
-            echo "❌ gradlew tidak ditemukan"
-            exit 1
-          fi
+          # Extract hanya gradle-wrapper.jar dari dalam zip
+          unzip -jo "$DIST_ZIP" \
+            "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-${GRADLE_VERSION}.jar" \
+            -d /tmp/gradle-extracted/ 2>/dev/null \
+          || unzip -jo "$DIST_ZIP" \
+            "gradle-${GRADLE_VERSION}/lib/gradle-wrapper*.jar" \
+            -d /tmp/gradle-extracted/
+
+          # Copy jar ke wrapper dir
+          cp /tmp/gradle-extracted/*.jar android/gradle/wrapper/gradle-wrapper.jar
+
+          # Validasi
+          unzip -tq android/gradle/wrapper/gradle-wrapper.jar
+          echo "✅ gradle-wrapper.jar OK — $(du -h android/gradle/wrapper/gradle-wrapper.jar | cut -f1)"
+
+          # Pastikan gradlew executable
           chmod +x android/gradlew
-
-          echo "✅ Gradle wrapper ready"
-          ls -lh android/gradle/wrapper/
 
       # ── Flutter ───────────────────────────────────────────────────────────
       - name: Setup Flutter
@@ -305,8 +309,14 @@ jobs:
           # Pastikan wrapper jar ada
           if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
             mkdir -p gradle/wrapper
-            curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
-              "https://repo1.maven.org/maven2/org/gradle/gradle-wrapper/8.4/gradle-wrapper-8.4.jar"
+            DIST_ZIP="/tmp/gradle-${GRADLE_VERSION}-bin.zip"
+            [ ! -f "$DIST_ZIP" ] && curl -fsSL \
+              -o "$DIST_ZIP" \
+              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            unzip -jo "$DIST_ZIP" \
+              "gradle-${GRADLE_VERSION}/lib/gradle-wrapper*.jar" \
+              -d /tmp/gradle-extracted/
+            cp /tmp/gradle-extracted/*.jar gradle/wrapper/gradle-wrapper.jar
           fi
           chmod +x gradlew
 
